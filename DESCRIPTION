@@ -1,16 +1,42 @@
 Package: CAMELLIA
 Type: Package
-Title: What the Package Does (Title Case)
+Title: Combining AlignMent-free fEature seLection cLassIficAtion
 Version: 0.1.0
 Authors@R: c(
     person(
-      "Jane", "Doe",
-      email = "jane@example.com",
+      "Tatiana", "Mari Saita",
+      email = "tatianasaita@gmail.com",
+      role = c("aut", "cre")
+    )
+person(
+      "Matheus", "Henrique Pimenta Zanon",
+      email = "omatheuspimenta@outlook.com",
+      role = c("aut", "cre")
+    )
+person(
+      "Fabricio", "Martins Lopes",
+      email = "fabricio@utfpr.edu.br",
+      role = c("aut", "cre")
+    )
+person(
+      "Glaucia", "Maria Bressan",
+      email = "glauciabressan@utfpr.edu.br",
+      role = c("aut", "cre")
+    )
+person(
+      "Glaucia", "Maria Bressan",
+      email = "glauciabressan@utfpr.edu.br",
+      role = c("aut", "cre")
+    )
+person(
+      "Artur", "Trancoso Lopo Queiroz",
+      email = "artur.queiroz@fiocruz.br",
       role = c("aut", "cre")
     )
   )
-Description: More about what it does (maybe more than one line).
-    Continuation lines should be indented.
+Description: Feature selection methodology for classifying genetic sequences without alignment. 
+Sequences are represented by adjacency matrices, enabling the identification of motifs (k-mers) that capture structural patterns relevant for distinguishing species by variants (subtypes). 
+Evaluation uses machine learning models, including Random Forest and XGBoost.
 License: GPL-3
 Encoding: UTF-8
 LazyData: true
