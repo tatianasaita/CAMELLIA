@@ -3,46 +3,34 @@ Type: Package
 Title: Combining AlignMent-free fEature seLection cLassIficAtion
 Version: 0.1.0
 Authors@R: c(
-    person(
-      "Tatiana", "Mari Saita",
-      email = "tatianasaita@gmail.com",
-      role = c("aut", "cre")
-    )
-person(
-      "Matheus", "Henrique Pimenta Zanon",
-      email = "omatheuspimenta@outlook.com",
-      role = c("aut", "cre")
-    )
-person(
-      "Fabricio", "Martins Lopes",
-      email = "fabricio@utfpr.edu.br",
-      role = c("aut", "cre")
-    )
-person(
-      "Glaucia", "Maria Bressan",
-      email = "glauciabressan@utfpr.edu.br",
-      role = c("aut", "cre")
-    )
-person(
-      "Glaucia", "Maria Bressan",
-      email = "glauciabressan@utfpr.edu.br",
-      role = c("aut", "cre")
-    )
-person(
-      "Artur", "Trancoso Lopo Queiroz",
-      email = "artur.queiroz@fiocruz.br",
-      role = c("aut", "cre")
-    )
-  )
-Description: Feature selection methodology for classifying genetic sequences without alignment. 
-Sequences are represented by adjacency matrices, enabling the identification of motifs (k-mers) that capture structural patterns relevant for distinguishing species by variants (subtypes). 
-Evaluation uses machine learning models, including Random Forest and XGBoost.
+    person("Tatiana", "Mari Saita", 
+           email = "tatianasaita@gmail.com", 
+           role = c("aut", "cre")),
+    person("Matheus Henrique Pimenta", "Zanon", 
+           email = "omatheuspimenta@outlook.com", 
+           role = "aut"),
+    person("Fabricio Martins", "Lopes", 
+           email = "fabricio@utfpr.edu.br", 
+           role = "aut"),
+    person("Glaucia Maria", "Bressan", 
+           email = "glauciabressan@utfpr.edu.br", 
+           role = "aut"),
+    person("Artur Trancoso Lopo", "Queiroz", 
+           email = "artur.queiroz@fiocruz.br", 
+           role = "aut")
+          )
+Description: Feature selection methodology for classifying genetic sequences 
+    without alignment. Sequences are represented by adjacency matrices, enabling 
+    the identification of motifs (k-mers) that capture structural patterns relevant 
+    for distinguishing species and variants (subtypes). Evaluation uses machine 
+    learning models, including Random Forest and XGBoost.
 License: GPL-3
 Encoding: UTF-8
 LazyData: true
-Imports: 
-    Biostrings
+Imports:
+    Biostrings,
+    dendextend
 RoxygenNote: 7.3.3
-Suggests: 
+Suggests:
     testthat (>= 3.0.0)
 Config/testthat/edition: 3

@@ -1,8 +1,7 @@
 #' Create k-mer count data from FASTA files
 #'
 #' @param input Character string. Path to directory containing FASTA files
-#' @param output Character string. Path for output file (currently not used)
-#' @param k Integer. Length of k-mers to count (default: 3)
+#' @param k Integer. Length of k-mers to count (default: 6)
 #' @param alphabet Character vector. Alphabet to use for k-mer generation (default: DNA_ALPHABET[1:4])
 #'
 #' @return A list with two elements: kmers (matrix of k-mer counts) and metadata (data frame)
@@ -13,7 +12,7 @@
 #'
 #' @keywords internal
 #' @noRd
-create_data <- function(input, output, k = 3, alphabet = Biostrings::DNA_ALPHABET[1:4]) {
+create_data <- function(input, k = 6, alphabet = Biostrings::DNA_ALPHABET[1:4]) {
 
   # Read all fasta files in the input directory
   fasta_files <- list.files(input, pattern = "\\.fasta$", full.names = TRUE)
@@ -81,6 +80,6 @@ create_data <- function(input, output, k = 3, alphabet = Biostrings::DNA_ALPHABE
   cat("Kmer matrix dimensions:", nrow(kmer_matrix), "x", ncol(kmer_matrix), "\n")
   cat("Done!\n")
 
-  return(list(kmers = kmer_matrix,
+  return(list(kmers = as.data.frame(kmer_matrix),
               metadata = metadata))
 }

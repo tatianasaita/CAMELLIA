@@ -23,7 +23,6 @@ test_that("create_data processes fasta files correctly", {
   # Run function
   result <- create_data(
     input = test_input,
-    output = file.path(temp_dir, "output.csv"),
     k = 2
   )
 
@@ -54,7 +53,7 @@ test_that("create_data stops when no fasta files found", {
 
   # Should throw error
   expect_error(
-    create_data(empty_dir, "output.csv"),
+    create_data(empty_dir),
     "No .fasta files found"
   )
 
@@ -75,11 +74,11 @@ test_that("create_data works with different k values", {
   ), fasta_path)
 
   # Test with k=3
-  result_k3 <- create_data(test_input, "output.csv", k = 3)
+  result_k3 <- create_data(test_input, k = 3)
   expect_equal(ncol(result_k3$kmers), 65)  # 64 3-mers + CLASS
 
   # Test with k=1
-  result_k1 <- create_data(test_input, "output.csv", k = 1)
+  result_k1 <- create_data(test_input, k = 1)
   expect_equal(ncol(result_k1$kmers), 5)  # 4 1-mers + CLASS
 
   # Clean up
@@ -103,7 +102,7 @@ test_that("create_data handles multiple sequences per file", {
     "TTTT"
   ), fasta_path)
 
-  result <- create_data(test_input, "output.csv", k = 2)
+  result <- create_data(test_input, k = 2)
 
   expect_equal(nrow(result$metadata), 4)
   expect_equal(nrow(result$kmers), 4)
@@ -122,7 +121,7 @@ test_that("create_data assigns correct class names from filenames", {
   writeLines(c(">s1", "ACGT"), file.path(test_input, "positive.fasta"))
   writeLines(c(">s2", "TGCA"), file.path(test_input, "negative.fasta"))
 
-  result <- create_data(test_input, "output.csv", k = 2)
+  result <- create_data(test_input, k = 2)
 
   classes <- unique(result$metadata$class)
   expect_true("positive" %in% classes)
