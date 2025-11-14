@@ -1,6 +1,6 @@
 Package: CAMELLIA
 Type: Package
-Title: Combining AlignMent-free fEature seLection cLassIficAtion
+Title: Title: Combining AlignMent-Free fEature seLection cLassIficAtion
 Version: 0.1.0
 Authors@R: c(
     person("Tatiana", "Mari Saita", 
@@ -27,10 +27,17 @@ Description: Feature selection methodology for classifying genetic sequences
 License: GPL-3
 Encoding: UTF-8
 LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
 Imports:
     Biostrings,
-    dendextend
-RoxygenNote: 7.3.3
+    ape,
+    stats,
+    utils,
+    methods
 Suggests:
-    testthat (>= 3.0.0)
+    testthat (>= 3.0.0),
+    caret,
+    randomForest,
+    xgboost
 Config/testthat/edition: 3
