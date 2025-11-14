@@ -1,11 +1,8 @@
-
-
-```markdown
 ---
-  output: github_document
+output: github_document
 ---
 
-  <!-- README.md is generated from README.Rmd. Please edit that file -->
+<!-- README.md is generated from README.Rmd. Please edit that file -->
 
 ```{r, include = FALSE}
 knitr::opts_chunk$set(
@@ -19,11 +16,11 @@ knitr::opts_chunk$set(
 # CAMELLIA
 
 <!-- badges: start -->
-  [![CRAN status](https://www.r-pkg.org/badges/version/CAMELLIA)](https://CRAN.R-project.org/package=CAMELLIA)
+[![CRAN status](https://www.r-pkg.org/badges/version/CAMELLIA)](https://CRAN.R-project.org/package=CAMELLIA)
 [![R-CMD-check](https://github.com/tatianasaita/CAMELLIA/workflows/R-CMD-check/badge.svg)](https://github.com/tatianasaita/CAMELLIA/actions)
 <!-- badges: end -->
 
-  CAMELLIA provides a comprehensive pipeline for k-mer-based sequence analysis, clustering, motif discovery, and machine learning classification. The package is particularly suited for viral sequence classification and genomic pattern recognition.
+CAMELLIA provides a comprehensive pipeline for k-mer-based sequence analysis, clustering, motif discovery, and machine learning classification. The package is particularly suited for viral sequence classification and genomic pattern recognition.
 
 ## Installation
 
@@ -256,5 +253,3 @@ GPL-3
 ## Issues
 
 Report bugs and request features at: https://github.com/tatianasaita/CAMELLIA/issues
-```
-
