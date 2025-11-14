@@ -1,0 +1,260 @@
+
+
+```markdown
+---
+  output: github_document
+---
+
+  <!-- README.md is generated from README.Rmd. Please edit that file -->
+
+  ```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.path = "man/figures/README-",
+  out.width = "100%"
+)
+```
+
+# CAMELLIA
+
+<!-- badges: start -->
+  [![CRAN status](https://www.r-pkg.org/badges/version/CAMELLIA)](https://CRAN.R-project.org/package=CAMELLIA)
+[![R-CMD-check](https://github.com/tatianasaita/CAMELLIA/workflows/R-CMD-check/badge.svg)](https://github.com/tatianasaita/CAMELLIA/actions)
+<!-- badges: end -->
+
+  CAMELLIA provides a comprehensive pipeline for k-mer-based sequence analysis, clustering, motif discovery, and machine learning classification. The package is particularly suited for viral sequence classification and genomic pattern recognition.
+
+## Installation
+
+You can install the released version of CAMELLIA from [CRAN](https://CRAN.R-project.org) with:
+
+  ```{r eval=FALSE}
+install.packages("CAMELLIA")
+```
+
+And the development version from [GitHub](https://github.com/) with:
+
+  ```{r eval=FALSE}
+# install.packages("devtools")
+devtools::install_github("tatianasaita/CAMELLIA")
+```
+
+## Features
+
+- **K-mer Analysis**: Count and analyze k-mers from FASTA sequence files
+- **Hierarchical Clustering**: Build dendrograms based on k-mer profiles
+- **Smart Clustering**: Identify homogeneous sequence clusters
+- **Motif Discovery**: Calculate cluster-specific discriminative motifs
+- **Machine Learning**: Train Random Forest and XGBoost classifiers
+- **Cross-validation**: Built-in k-fold cross-validation for model evaluation
+
+## Quick Start
+
+```{r example, eval=FALSE}
+library(CAMELLIA)
+
+# Use example data included in the package
+input_dir <- system.file("extdata", package = "CAMELLIA")
+
+# Count 6-mers from sequences
+data_result <- create_data(input = input_dir, k = 6)
+```
+
+## Complete Workflow
+
+Here's a step-by-step example using HIV sequence data:
+
+### Step 1: Count K-mers and Create Data Matrix
+
+```{r step1, eval=FALSE}
+library(CAMELLIA)
+
+# Set input directory containing FASTA files
+input_dir <- system.file("extdata", package = "CAMELLIA")
+
+# Count 6-mers from sequences
+data_result <- create_data(input = input_dir, k = 6)
+
+# Inspect the results
+print(data_result)
+# Structure:
+# - $kmers: k-mer count matrix (sequences x k-mers)
+# - $metadata: sequence names and class labels
+```
+
+### Step 2: Create Dendrogram
+
+```{r step2, eval=FALSE}
+# Build hierarchical clustering dendrogram
+dend_result <- create_dendrogram(
+  data = data_result$kmers,
+  sequence_names = data_result$metadata$sequence_name,
+  dist_method = "euclidean",
+  plot_title = "K-mer Based Dendrogram"
+)
+
+# The dendrogram is automatically plotted
+```
+
+### Step 3: Cluster Sequences by Homogeneity
+
+```{r step3, eval=FALSE}
+# Cluster sequences based on class homogeneity
+cluster_result <- cluster_dendrogram(
+  dendrogram = dend_result$dendrogram,
+  class_labels = data_result$metadata$class[dend_result$order],
+  hom_thresh = 0.75,        # Minimum homogeneity threshold
+  min_size = 10,            # Minimum cluster size
+  dendro_order = dend_result$order,
+  sequence_names = data_result$metadata$sequence_name,
+  data_result = data_result
+)
+
+# View cluster summary
+summary(cluster_result)
+```
+
+### Step 4: Calculate Cluster-Specific Motifs
+
+```{r step4, eval=FALSE}
+# Identify discriminative motifs for each cluster
+motif_result <- calculate_cluster_motifs(cluster_result)
+
+print(motif_result)
+```
+
+### Step 5: Select Top Discriminative Motifs
+
+```{r step5, eval=FALSE}
+# Select the top 100 most discriminative motifs
+selected_motifs <- select_motifs(
+  motif_result = motif_result,
+  cluster_result = cluster_result,
+  n = 100,
+  verbose = TRUE
+)
+
+# View selected motifs
+head(selected_motifs)
+```
+
+### Step 6: Prepare Training and Validation Datasets
+
+```{r step6, eval=FALSE}
+# Sample sequences for training and validation
+datasets <- select_sample_train_validation(
+  cluster_result = cluster_result,
+  k_per_class = 60,         # Sequences per class
+  min_size = 800            # Minimum dataset size
+)
+
+# Check dataset composition
+str(datasets)
+```
+
+### Step 7: Train Classification Models
+
+```{r step7, eval=FALSE}
+# Train Random Forest and XGBoost models
+classification_result <- train_models_rf_xgboost(
+  dataset_traintest = datasets,
+  selected_motifs = selected_motifs,
+  prop_train = 0.7,         # 70% for training, 30% for testing
+  cv_folds = 5,             # 5-fold cross-validation
+  seed = 123
+)
+
+# View model performance
+print(classification_result)
+
+# Access individual results:
+# - classification_result$rf_model: Random Forest model
+# - classification_result$xgb_model: XGBoost model
+# - classification_result$performance: Accuracy metrics
+```
+
+## Data Format
+
+CAMELLIA expects FASTA files organized by class:
+
+```
+input_dir/
+├── class1.fasta
+├── class2.fasta
+└── class3.fasta
+```
+
+Each FASTA file should contain sequences for one class:
+
+```
+>sequence1
+ATCGATCGATCG
+>sequence2
+GCTAGCTAGCTA
+```
+
+## Key Parameters
+
+| Parameter | Function | Description | Default |
+|-----------|----------|-------------|---------|
+| `k` | `create_data()` | K-mer size | - |
+| `dist_method` | `create_dendrogram()` | Distance metric | `"euclidean"` |
+| `hom_thresh` | `cluster_dendrogram()` | Homogeneity threshold | `0.75` |
+| `min_size` | `cluster_dendrogram()` | Minimum cluster size | `10` |
+| `n` | `select_motifs()` | Number of motifs to select | `100` |
+| `prop_train` | `train_models_rf_xgboost()` | Training proportion | `0.7` |
+| `cv_folds` | `train_models_rf_xgboost()` | Cross-validation folds | `5` |
+
+## Output Objects
+
+All functions return S3 objects with specific classes:
+
+- `camellia_data`: K-mer counts and metadata
+- `camellia_dendrogram`: Hierarchical clustering results
+- `camellia_clusters`: Cluster assignments and statistics
+- `camellia_motifs`: Motif scores and rankings
+- `camellia_models`: Trained classification models
+
+Each object has `print()` and `summary()` methods for easy inspection.
+
+## Performance Tips
+
+1. **K-mer size**: Larger k values (5-7) capture more specific patterns but increase computation time
+2. **Homogeneity threshold**: Lower values (0.6-0.7) create more clusters; higher values (0.8-0.9) create fewer, purer clusters
+3. **Motif selection**: Start with n=100 motifs; increase if classification accuracy is low
+4. **Cross-validation**: Use 5-10 folds for reliable performance estimates
+
+## Citation
+
+If you use CAMELLIA in your research, please cite:
+
+```
+# Citation information here
+```
+
+## Getting Help
+
+For more details, see the package vignette:
+
+```{r vignette, eval=FALSE}
+vignette("camellia-workflow", package = "CAMELLIA")
+```
+
+Or check the function documentation:
+
+```{r help, eval=FALSE}
+?create_data
+?cluster_dendrogram
+?train_models_rf_xgboost
+```
+
+## License
+
+GPL-3
+
+## Issues
+
+Report bugs and request features at: https://github.com/tatianasaita/CAMELLIA/issues
+```
+

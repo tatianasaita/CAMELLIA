@@ -39,5 +39,8 @@ Suggests:
     testthat (>= 3.0.0),
     caret,
     randomForest,
-    xgboost
+    xgboost,
+    knitr,
+    rmarkdown
 Config/testthat/edition: 3
+VignetteBuilder: knitr
