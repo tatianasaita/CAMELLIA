@@ -7,7 +7,7 @@
 
   <!-- README.md is generated from README.Rmd. Please edit that file -->
 
-  ```{r, include = FALSE}
+```{r, include = FALSE}
 knitr::opts_chunk$set(
   collapse = TRUE,
   comment = "#>",
@@ -29,13 +29,13 @@ knitr::opts_chunk$set(
 
 You can install the released version of CAMELLIA from [CRAN](https://CRAN.R-project.org) with:
 
-  ```{r eval=FALSE}
+```{r eval=FALSE}
 install.packages("CAMELLIA")
 ```
 
 And the development version from [GitHub](https://github.com/) with:
 
-  ```{r eval=FALSE}
+```{r eval=FALSE}
 # install.packages("devtools")
 devtools::install_github("tatianasaita/CAMELLIA")
 ```
