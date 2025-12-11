@@ -4,7 +4,12 @@
 \alias{create_data}
 \title{Create K-mer Count Data from FASTA Files}
 \usage{
-create_data(input, k = 6L, alphabet = Biostrings::DNA_ALPHABET[1:4])
+create_data(
+  input,
+  k = 6L,
+  alphabet = Biostrings::DNA_ALPHABET[1:4],
+  verbose = TRUE
+)
 }
 \arguments{
 \item{input}{Character string. Path to directory containing FASTA files
@@ -15,10 +20,14 @@ one FASTA file.}
 typically between 4 and 8 for DNA sequences. Default: 6.}
 
 \item{alphabet}{Character vector. Alphabet to use for k-mer generation.
-Default: \code{Biostrings::DNA_ALPHABET[1:4]} (A, C, G, T).}
+Default: First 4 letters of \code{Biostrings::DNA_ALPHABET}
+(A, C, G, T - standard DNA nucleotides).}
+
+\item{verbose}{Logical. If \code{TRUE} (default), print progress information
+to the console. If \code{FALSE}, run silently.}
 }
 \value{
-A list with two elements:
+An object of class \code{"kmer_data"}, which is a list with two elements:
 \describe{
 \item{kmers}{Data frame with k-mer counts. Rows represent sequences,
 columns represent k-mers plus a 'CLASS' column with class labels.
@@ -36,17 +45,11 @@ Reads DNA sequences from FASTA files in a directory, counts k-mer occurrences,
 and returns a list containing k-mer counts and sequence metadata.
 }
 \details{
-The function processes all FASTA files in the specified directory:
+The function processes all FASTA files in the specified directory in the following steps:
 \enumerate{
 \item Validates input parameters
 \item Discovers all .fasta files in the input directory
-\item For each FASTA file:
-\itemize{
-\item Extracts class name from filename
-\item Reads DNA sequences using \code{\link[Biostrings]{readDNAStringSet}}
-\item Counts k-mers for each sequence
-\item Stores metadata and k-mer counts
-}
+\item For each FASTA file, reads sequences and counts k-mers
 \item Combines results into a single data frame
 \item Returns both k-mer counts and metadata
 }
@@ -77,14 +80,11 @@ head(metadata)
 
 # Check class distribution
 table(metadata$class)
-
-# Filter sequences by class
-hiv_indices <- which(metadata$class == "HIV")
-hiv_kmers <- result$kmers[hiv_indices, ]
 }
 
 }
 \seealso{
+\code{\link{count_kmers}} for k-mer counting,
 \code{\link[Biostrings]{readDNAStringSet}} for reading FASTA files,
-\code{\link[Biostrings]{DNA_ALPHABET}} for available alphabets.
+\code{\link[Biostrings]{DNA_ALPHABET}} for available DNA alphabets.
 }

@@ -1,753 +1,626 @@
-# ==============================================================================
-# File: R/cluster_dendrogram.R
-# ==============================================================================
-
 #' Cluster Dendrogram Leaves with Homogeneity and Size Constraints
 #'
 #' Creates clusters from dendrogram leaves following their hierarchical order,
-#' applying homogeneity and minimum size constraints. The function optimizes
-#' cluster formation by prioritizing complete class sequences and maximizing
-#' cluster sizes while maintaining the specified homogeneity threshold.
+#' applying homogeneity and size constraints while respecting dendrogram contiguity.
 #'
-#' @param dendrogram A dendrogram object (typically from \code{\link[stats]{as.dendrogram}}
-#'   or \code{\link[stats]{hclust}})
-#' @param class_labels Character vector of class labels for each dendrogram element,
-#'   in dendrogram order (matching the leaf order from \code{\link[stats]{order.dendrogram}})
-#' @param hom_thresh Numeric value between 0 and 1. Minimum homogeneity threshold.
-#'   Homogeneity is calculated as the proportion of the most frequent class:
-#'   \code{max(class_counts) / total_elements}
-#' @param min_size Positive integer. Minimum number of elements required per cluster
-#' @param allow_flexible_start Logical. If TRUE, allows starting new clusters even when
-#'   current element cannot be added to previous cluster. Default is TRUE.
-#' @param verbose Logical. If TRUE, prints progress messages. Default is TRUE.
-#' @param dendro_order Integer vector. Dendrogram order from create_dendrogram output.
-#'   If provided, enables mapping back to original dataset order. Default is NULL.
-#' @param sequence_names Character vector. Sequence names in original order.
-#'   Used for detailed element assignment. Default is NULL.
-#' @param data_result List containing 'kmers' and 'metadata' data.frames.
-#'   If provided, adds cluster assignments to metadata. Default is NULL.
+#' @param dendrogram A dendrogram object
+#' @param class_labels Character vector of class labels in dendrogram order
+#' @param hom_thresh Minimum homogeneity threshold (0-1)
+#' @param min_size Minimum cluster size (default: 3)
+#' @param verbose Print progress messages (default: TRUE)
+#' @param dendro_order Integer vector for mapping back to original order
+#' @param sequence_names Character vector of sequence names
+#' @param data_result List with 'kmers' and 'metadata' for adding assignments
 #'
-#' @return A list with the following components:
-#'   \describe{
-#'     \item{cluster_summary}{Data.frame with cluster summary information containing:
-#'       \itemize{
-#'         \item cluster_id: Sequential cluster identification number
-#'         \item n_elements: Total number of elements in the cluster
-#'         \item n_classes: Number of distinct classes present
-#'         \item dominant_class: Class with highest frequency
-#'         \item homogeneity: Homogeneity value (0-1)
-#'         \item class_distribution: Detailed class composition
-#'       }
-#'     }
-#'     \item{element_assignment}{Data.frame mapping each element to its cluster (if dendro_order provided):
-#'       \itemize{
-#'         \item original_index: Position in original dataset
-#'         \item sequence_name: Name of the sequence (if provided)
-#'         \item dendro_index: Position in dendrogram order
-#'         \item class: Original class label
-#'         \item cluster: Assigned cluster ID
-#'         \item dominant_class: Dominant class in assigned cluster
-#'         \item homogeneity: Homogeneity of assigned cluster
-#'       }
-#'     }
-#'     \item{data_result}{Updated data_result with cluster column added to metadata (if data_result provided)}
-#'     \item{cluster_assignment_dendro_order}{Integer vector with cluster IDs in dendrogram order}
-#'     \item{cluster_assignment_original_order}{Integer vector with cluster IDs in original order (if dendro_order provided)}
-#'   }
-#'
-#' @details
-#' The algorithm proceeds in the following steps:
-#' \enumerate{
-#'   \item \strong{Priority for complete classes:} If a consecutive sequence contains
-#'     ALL elements of a particular class, creates a pure cluster (homogeneity = 1.0)
-#'   \item \strong{Greedy expansion:} For mixed sequences, builds the largest possible
-#'     clusters while maintaining homogeneity >= \code{hom_thresh}
-#'   \item \strong{Smart element assignment:} When an element cannot be added to the
-#'     previous cluster, starts a new cluster if possible
-#'   \item \strong{Constraint enforcement:} Ensures all clusters satisfy both
-#'     \code{min_size} and \code{hom_thresh} through iterative merging
-#'   \item \strong{Complete assignment:} Guarantees every element is assigned to
-#'     exactly one cluster
-#'   \item \strong{Order mapping:} If dendro_order is provided, maps cluster assignments
-#'     back to original dataset order
-#'   \item \strong{Data integration:} If data_result is provided, adds cluster assignments
-#'     to the metadata data.frame
-#' }
-#'
-#' If it's impossible to satisfy both constraints simultaneously, the function will
-#' attempt to create the best possible clustering and issue a warning.
-#'
-#' @examples
-#' \dontrun{
-#' # Create sample data
-#' set.seed(123)
-#' data_matrix <- matrix(rnorm(100 * 10), nrow = 100)
-#' classes <- rep(c("A", "B", "C", "D"), each = 25)
-#'
-#' # Create dendrogram
-#' dist_mat <- dist(data_matrix)
-#' hc <- hclust(dist_mat, method = "ward.D2")
-#' dend <- as.dendrogram(hc)
-#'
-#' # Prepare class labels in dendrogram order
-#' dend_order <- order.dendrogram(dend)
-#' class_labels <- classes[dend_order]
-#'
-#' # Create clusters
-#' cluster_result <- cluster_dendrogram(
-#'   dendrogram = dend,
-#'   class_labels = class_labels,
-#'   hom_thresh = 0.7,
-#'   min_size = 5,
-#'   dendro_order = dend_order
-#' )
-#'
-#' # View results
-#' print(cluster_result)
-#' summary(cluster_result)
-#' }
-#'
-#' @importFrom stats is.leaf
+#' @return List with clustering results
 #' @export
-cluster_dendrogram <- function(dendrogram, class_labels, hom_thresh, min_size,
-                               allow_flexible_start = TRUE, verbose = TRUE,
-                               dendro_order = NULL, sequence_names = NULL,
+cluster_dendrogram <- function(dendrogram,
+                               class_labels,
+                               hom_thresh,
+                               min_size = 3L,
+                               verbose = TRUE,
+                               dendro_order = NULL,
+                               sequence_names = NULL,
                                data_result = NULL) {
 
-  # === Helper: Count dendrogram leaves correctly ===
+  # === HELPER FUNCTIONS ===
 
-  count_dendro_leaves <- function(dend) {
+  count_leaves <- function(dend) {
     if (stats::is.leaf(dend)) return(1L)
-    sum(vapply(dend, count_dendro_leaves, FUN.VALUE = integer(1)))
+    sum(vapply(dend, count_leaves, FUN.VALUE = integer(1)))
   }
 
-  # === INPUT VALIDATION ===
+  calc_homogeneity <- function(classes) {
+    if (length(classes) == 0) return(NA_real_)
+    max(table(classes)) / length(classes)
+  }
+
+  get_dominant <- function(classes) {
+    if (length(classes) == 0) return(NA_character_)
+    names(which.max(table(classes)))
+  }
+
+  find_segments <- function(indices) {
+    if (length(indices) <= 1) return(list(indices))
+    segs <- list()
+    current <- indices[1]
+    for (i in 2:length(indices)) {
+      if (indices[i] == indices[i-1] + 1) {
+        current <- c(current, indices[i])
+      } else {
+        segs[[length(segs) + 1]] <- current
+        current <- indices[i]
+      }
+    }
+    segs[[length(segs) + 1]] <- current
+    segs
+  }
+
+  is_complete_class_cluster <- function(cluster_classes, total_counts) {
+    class_table <- table(cluster_classes)
+    dominant_class <- names(which.max(class_table))
+    class_table[dominant_class] == total_counts[dominant_class]
+  }
+
+  create_cluster <- function(indices, classes, counter) {
+    list(indices = indices, classes = classes, id = counter)
+  }
+
+  log_msg <- function(...) if (verbose) message(...)
+
+  # === VALIDATION ===
 
   if (!inherits(dendrogram, "dendrogram")) {
-    stop("'dendrogram' must be a dendrogram object")
+    stop("'dendrogram' must be a dendrogram object", call. = FALSE)
   }
 
-  if (!is.character(class_labels)) {
-    stop("'class_labels' must be a character vector")
+  n_elements <- count_leaves(dendrogram)
+
+  if (length(class_labels) != n_elements) {
+    stop(sprintf("'class_labels' length must be %d", n_elements), call. = FALSE)
   }
 
-  # Count leaves correctly
-  n_leaves <- count_dendro_leaves(dendrogram)
-  if (length(class_labels) != n_leaves) {
-    stop(sprintf(
-      "'class_labels' must have length %d (same as dendrogram leaves)",
-      n_leaves
-    ))
+  if (anyNA(class_labels) || any(class_labels == "")) {
+    stop("'class_labels' contains NA or empty values", call. = FALSE)
   }
 
-  if (any(is.na(class_labels))) {
-    stop("'class_labels' contains NA values")
-  }
+  min_size <- as.integer(min_size)
 
-  if (any(class_labels == "")) {
-    stop("'class_labels' contains empty strings")
-  }
+  log_msg(sprintf("Starting clustering (n=%d, min_size=%d, hom_thresh=%.2f)",
+                  n_elements, min_size, hom_thresh))
 
-  if (!is.numeric(hom_thresh) || length(hom_thresh) != 1 || is.na(hom_thresh) ||
-      hom_thresh < 0 || hom_thresh > 1) {
-    stop("'hom_thresh' must be a numeric value between 0 and 1")
-  }
+  # === INITIALIZATION ===
 
-  if (!is.numeric(min_size) || length(min_size) != 1 || is.na(min_size) ||
-      min_size < 1 || min_size != as.integer(min_size)) {
-    stop("'min_size' must be an integer >= 1")
-  }
-
-  # Validate optional parameters
-  if (!is.null(dendro_order)) {
-    if (!is.integer(dendro_order) && !is.numeric(dendro_order)) {
-      stop("'dendro_order' must be an integer vector")
-    }
-    if (length(dendro_order) != n_leaves) {
-      stop(sprintf("'dendro_order' must have length %d", n_leaves))
-    }
-  }
-
-  if (!is.null(sequence_names)) {
-    if (!is.character(sequence_names)) {
-      stop("'sequence_names' must be a character vector")
-    }
-    if (length(sequence_names) != n_leaves) {
-      stop(sprintf("'sequence_names' must have length %d", n_leaves))
-    }
-  }
-
-  # Validate data_result if provided
-  if (!is.null(data_result)) {
-    if (!is.list(data_result)) {
-      stop("'data_result' must be a list")
-    }
-
-    if (!all(c("kmers", "metadata") %in% names(data_result))) {
-      stop("'data_result' must contain 'kmers' and 'metadata' elements")
-    }
-
-    if (!is.data.frame(data_result$metadata)) {
-      stop("'data_result$metadata' must be a data.frame")
-    }
-
-    if (nrow(data_result$metadata) != n_leaves) {
-      stop(sprintf(
-        "data_result has %d sequences but dendrogram has %d elements",
-        nrow(data_result$metadata), n_leaves
-      ))
-    }
-
-    if (is.null(dendro_order)) {
-      stop("'dendro_order' must be provided when 'data_result' is provided")
-    }
-  }
-
-  # === Pre-compute: Total count of each class ===
-
+  clusters <- list()
+  cluster_counter <- 0L
+  assigned <- rep(FALSE, n_elements)
   class_total_counts <- table(class_labels)
 
-  if (verbose) {
-    message("=== Class Distribution ===")
-    for (cls in names(class_total_counts)) {
-      message(sprintf("%s: %d elements", cls, class_total_counts[cls]))
-    }
-    message("")
-  }
+  # === PHASE 0: Handle rare classes (total count < min_size) ===
 
-  # === Helper functions ===
+  log_msg("Phase 0: Identifying rare classes (total count < min_size)")
 
-  # Optimized homogeneity calculation
-  calculate_homogeneity <- function(classes) {
-    if (length(classes) == 0) return(NA_real_)
-    class_counts <- table(classes)
-    max_count <- max(class_counts)
-    return(max_count / length(classes))
-  }
+  rare_classes <- names(class_total_counts[class_total_counts < min_size])
 
-  # Optimized dominant class calculation
-  get_dominant_class <- function(classes) {
-    if (length(classes) == 0) return(NA_character_)
-    class_counts <- table(classes)
-    return(names(class_counts)[which.max(class_counts)])
-  }
+  if (length(rare_classes) > 0) {
+    log_msg(sprintf("  Found %d rare classes: %s",
+                    length(rare_classes), paste(rare_classes, collapse = ", ")))
 
-  # OPTIMIZATION B: Use rle() for faster sequence detection
-  find_complete_class_sequence <- function(labels, start_pos, total_counts) {
-    if (start_pos > length(labels)) {
-      return(list(found = FALSE, end_pos = start_pos - 1, class_name = NA))
-    }
+    for (rare_class in rare_classes) {
+      rare_indices <- which(class_labels == rare_class & !assigned)
+      if (length(rare_indices) == 0) next
 
-    class_names <- names(total_counts)
-    class_needed <- as.integer(total_counts[class_names])
-    names(class_needed) <- class_names
+      segments <- find_segments(rare_indices)
+      log_msg(sprintf("  Class '%s' (%d total elements, %d segments)",
+                      rare_class, length(rare_indices), length(segments)))
 
-    for (i in seq_along(class_names)) {
-      cls <- class_names[i]
-      total_needed <- class_needed[i]
+      for (seg in segments) {
+        cluster_counter <- cluster_counter + 1L
+        clusters[[cluster_counter]] <- create_cluster(seg, rep(rare_class, length(seg)), cluster_counter)
+        assigned[seg] <- TRUE
 
-      if (is.na(total_needed) || total_needed <= 0) next
-      if (start_pos + total_needed - 1 > length(labels)) next
-
-      end_check <- start_pos + total_needed - 1
-      candidate_seq <- labels[start_pos:end_check]
-
-      # Use rle for faster detection of uniform sequences
-      run_lengths <- rle(candidate_seq)
-      if (length(run_lengths$lengths) == 1 && run_lengths$values[1] == cls) {
-        return(list(
-          found = TRUE,
-          end_pos = end_check,
-          class_name = cls
-        ))
+        log_msg(sprintf("    Created %s cluster %d at position%s %s",
+                        if (length(seg) == 1) "singleton" else "",
+                        cluster_counter,
+                        if (length(seg) > 1) "s" else "",
+                        if (length(seg) == 1) seg else sprintf("%d-%d", min(seg), max(seg))))
       }
     }
-
-    return(list(found = FALSE, end_pos = start_pos - 1, class_name = NA))
+    log_msg(sprintf("  Phase 0 complete: %d clusters created for rare classes\n", cluster_counter))
+  } else {
+    log_msg("  No rare classes found\n")
   }
 
-  # OPTIMIZATION A: Use binary search for cluster validity
-  can_create_valid_cluster <- function(labels, start_pos, end_pos_limit) {
-    if (start_pos + min_size - 1 > end_pos_limit) {
-      return(list(valid = FALSE, end_pos = NA))
-    }
+  # === PHASE 1: Create pure class segments (homogeneity = 1.0) ===
 
-    # Binary search for the maximum valid end position
-    left <- start_pos + min_size - 1
-    right <- end_pos_limit
-    best_end <- NA
+  log_msg("Phase 1: Creating pure class segments")
 
-    while (left <= right) {
-      mid <- as.integer((left + right) / 2)
-      candidate_classes <- labels[start_pos:mid]
-      candidate_hom <- calculate_homogeneity(candidate_classes)
-
-      if (candidate_hom >= hom_thresh) {
-        best_end <- mid
-        left <- mid + 1
-      } else {
-        right <- mid - 1
-      }
-    }
-
-    if (!is.na(best_end)) {
-      return(list(valid = TRUE, end_pos = best_end))
-    } else {
-      return(list(valid = FALSE, end_pos = NA))
-    }
-  }
-
-  # === Main clustering algorithm ===
-
-  n_elements <- length(class_labels)
-  clusters <- list()
-  cluster_id <- 0
-  i <- 1
-
+  i <- 1L
   while (i <= n_elements) {
-
-    # Step 1: Check if there's a COMPLETE class sequence starting at i
-    complete_check <- find_complete_class_sequence(class_labels, i, class_total_counts)
-
-    if (complete_check$found) {
-      cluster_id <- cluster_id + 1
-      clusters[[cluster_id]] <- list(
-        indices = i:complete_check$end_pos,
-        classes = class_labels[i:complete_check$end_pos]
-      )
-
-      if (verbose) {
-        message(sprintf(">> Created PURE cluster for class '%s' with ALL %d elements (homog=1.0)",
-                        complete_check$class_name,
-                        complete_check$end_pos - i + 1))
-      }
-
-      i <- complete_check$end_pos + 1
+    if (assigned[i]) {
+      i <- i + 1L
       next
     }
 
-    # Step 2: Check if we have enough elements remaining
-    remaining_elements <- n_elements - i + 1
-
-    if (remaining_elements < min_size) {
-      if (cluster_id > 0) {
-        remaining <- i:n_elements
-        merged_classes <- c(clusters[[cluster_id]]$classes, class_labels[remaining])
-        merged_hom <- calculate_homogeneity(merged_classes)
-
-        if (merged_hom >= hom_thresh) {
-          clusters[[cluster_id]]$indices <- c(clusters[[cluster_id]]$indices, remaining)
-          clusters[[cluster_id]]$classes <- merged_classes
-          if (verbose) {
-            message(sprintf(">> Appended %d remaining elements to cluster %d (new homog=%.3f)",
-                            length(remaining), cluster_id, merged_hom))
-          }
-        } else {
-          warning(sprintf(
-            "Last %d elements cannot satisfy homogeneity constraint. Appending anyway with homogeneity=%.3f (threshold=%.3f)",
-            length(remaining), merged_hom, hom_thresh
-          ))
-          clusters[[cluster_id]]$indices <- c(clusters[[cluster_id]]$indices, remaining)
-          clusters[[cluster_id]]$classes <- merged_classes
-        }
-      } else {
-        cluster_id <- 1
-        clusters[[cluster_id]] <- list(
-          indices = i:n_elements,
-          classes = class_labels[i:n_elements]
-        )
-        warning(sprintf(
-          "Creating single cluster with %d elements (less than min_size=%d)",
-          remaining_elements, min_size
-        ))
-      }
-      break
+    current_class <- class_labels[i]
+    j <- i + 1L
+    while (j <= n_elements && !assigned[j] && class_labels[j] == current_class) {
+      j <- j + 1L
     }
 
-    # Step 3: Try to create a new valid cluster starting at position i
-    cluster_check <- can_create_valid_cluster(class_labels, i, n_elements)
+    segment_length <- j - i
+    if (segment_length >= min_size) {
+      cluster_counter <- cluster_counter + 1L
+      idx <- i:(j - 1L)
+      clusters[[cluster_counter]] <- create_cluster(idx, class_labels[idx], cluster_counter)
+      assigned[idx] <- TRUE
+      log_msg(sprintf("  Created cluster %d: %d elements of class '%s' (positions %d-%d)",
+                      cluster_counter, segment_length, current_class, i, j-1))
+    }
+    i <- j
+  }
 
-    if (cluster_check$valid) {
-      cluster_id <- cluster_id + 1
-      clusters[[cluster_id]] <- list(
-        indices = i:cluster_check$end_pos,
-        classes = class_labels[i:cluster_check$end_pos]
-      )
+  # === PHASE 2: Greedy expansion with homogeneity constraint ===
 
-      hom_val <- calculate_homogeneity(class_labels[i:cluster_check$end_pos])
-      if (verbose) {
-        message(sprintf(">> Created cluster %d: elements %d-%d (size=%d, homog=%.3f)",
-                        cluster_id, i, cluster_check$end_pos,
-                        cluster_check$end_pos - i + 1, hom_val))
+  log_msg("\nPhase 2: Greedy expansion")
+
+  i <- 1L
+  while (i <= n_elements) {
+    if (assigned[i]) {
+      i <- i + 1L
+      next
+    }
+
+    # Try extending last cluster
+    if (cluster_counter > 0L) {
+      last_cluster <- clusters[[cluster_counter]]
+      if (max(last_cluster$indices) == i - 1L) {
+        temp_classes <- c(last_cluster$classes, class_labels[i])
+        temp_hom <- calc_homogeneity(temp_classes)
+
+        if (temp_hom >= hom_thresh) {
+          clusters[[cluster_counter]]$indices <- c(last_cluster$indices, i)
+          clusters[[cluster_counter]]$classes <- temp_classes
+          assigned[i] <- TRUE
+          log_msg(sprintf("  Extended cluster %d (size=%d, hom=%.3f)",
+                          cluster_counter, length(temp_classes), temp_hom))
+          i <- i + 1L
+          next
+        }
+      }
+    }
+
+    # Try forming new cluster
+    best_end <- i
+    best_hom <- 1.0
+
+    if (i < n_elements) {
+      for (j in (i + 1L):n_elements) {
+        if (assigned[j]) break
+        hom <- calc_homogeneity(class_labels[i:j])
+        if (hom >= hom_thresh) {
+          best_end <- j
+          best_hom <- hom
+        } else {
+          break
+        }
+      }
+    }
+
+    segment_size <- best_end - i + 1L
+    if (segment_size >= min_size && best_hom >= hom_thresh) {
+      cluster_counter <- cluster_counter + 1L
+      idx <- i:best_end
+      clusters[[cluster_counter]] <- create_cluster(idx, class_labels[idx], cluster_counter)
+      assigned[idx] <- TRUE
+      log_msg(sprintf("  Created cluster %d: %d elements, hom=%.3f (positions %d-%d)",
+                      cluster_counter, segment_size, best_hom, i, best_end))
+    }
+    i <- best_end + 1L
+  }
+
+  # === PHASE 3: Process remaining elements ===
+
+  remaining <- which(!assigned)
+  if (length(remaining) > 0) {
+    log_msg(sprintf("\nPhase 3: Processing %d remaining elements", length(remaining)))
+    segments <- find_segments(remaining)
+
+    for (seg_idx in seq_along(segments)) {
+      seg <- segments[[seg_idx]]
+      seg_classes <- class_labels[seg]
+      n_seg <- length(seg)
+
+      log_msg(sprintf("  Segment %d: %d elements at positions %d-%d",
+                      seg_idx, n_seg, min(seg), max(seg)))
+
+      # Try merging with adjacent cluster
+      merged <- FALSE
+      if (cluster_counter > 0L) {
+        for (cid in seq_along(clusters)) {
+          if (is.null(clusters[[cid]])) next
+          if (max(clusters[[cid]]$indices) == seg[1] - 1L) {
+            temp_classes <- c(clusters[[cid]]$classes, seg_classes)
+            temp_hom <- calc_homogeneity(temp_classes)
+
+            if (temp_hom >= hom_thresh) {
+              clusters[[cid]]$indices <- c(clusters[[cid]]$indices, seg)
+              clusters[[cid]]$classes <- temp_classes
+              assigned[seg] <- TRUE
+              merged <- TRUE
+              log_msg(sprintf("    [OK] Merged into cluster %d (size=%d, hom=%.3f)",
+                              clusters[[cid]]$id, length(temp_classes), temp_hom))
+              break
+            }
+          }
+        }
       }
 
-      i <- cluster_check$end_pos + 1
-    } else {
-      if (cluster_id > 0) {
-        merged_classes <- c(clusters[[cluster_id]]$classes, class_labels[i])
-        merged_hom <- calculate_homogeneity(merged_classes)
+      if (merged) next
 
-        if (merged_hom >= hom_thresh) {
-          clusters[[cluster_id]]$indices <- c(clusters[[cluster_id]]$indices, i)
-          clusters[[cluster_id]]$classes <- merged_classes
-          i <- i + 1
-        } else {
-          if (allow_flexible_start) {
-            found_valid <- FALSE
-            for (look_ahead in (i + 1):min(i + 20, n_elements)) {
-              ahead_check <- can_create_valid_cluster(class_labels, look_ahead, n_elements)
-              if (ahead_check$valid) {
-                problematic <- i:(look_ahead - 1)
-                merged_classes <- c(clusters[[cluster_id]]$classes, class_labels[problematic])
-                merged_hom <- calculate_homogeneity(merged_classes)
+      # Try forming clusters within segment
+      if (n_seg >= min_size) {
+        i <- 1L
+        while (i <= n_seg) {
+          if (assigned[seg[i]]) {
+            i <- i + 1L
+            next
+          }
 
-                warning(sprintf(
-                  "Elements %d-%d added to cluster %d with reduced homogeneity %.3f (threshold=%.3f)",
-                  i, look_ahead - 1, cluster_id, merged_hom, hom_thresh
-                ))
+          best_end <- i
+          best_hom <- calc_homogeneity(seg_classes[i])
 
-                clusters[[cluster_id]]$indices <- c(clusters[[cluster_id]]$indices, problematic)
-                clusters[[cluster_id]]$classes <- merged_classes
-                i <- look_ahead
-                found_valid <- TRUE
+          if (i < n_seg) {
+            for (j in (i + 1L):n_seg) {
+              candidate_hom <- calc_homogeneity(seg_classes[i:j])
+              if (candidate_hom >= hom_thresh) {
+                best_end <- j
+                best_hom <- candidate_hom
+              } else {
                 break
               }
             }
+          }
 
-            if (!found_valid) {
-              warning(sprintf(
-                "Element %d (class '%s') added to cluster %d, resulting homogeneity=%.3f (threshold=%.3f)",
-                i, class_labels[i], cluster_id, merged_hom, hom_thresh
-              ))
-              clusters[[cluster_id]]$indices <- c(clusters[[cluster_id]]$indices, i)
-              clusters[[cluster_id]]$classes <- merged_classes
-              i <- i + 1
-            }
-          } else {
-            stop(sprintf(
-              "Cannot assign element at position %d without violating homogeneity constraint. Current element class: '%s'. Previous cluster homogeneity would become %.3f (threshold: %.3f). Consider reducing hom_thresh or min_size, or set allow_flexible_start=TRUE.",
-              i, class_labels[i], merged_hom, hom_thresh
-            ))
+          cluster_size <- best_end - i + 1L
+          if (best_hom >= hom_thresh && cluster_size >= min_size) {
+            cluster_counter <- cluster_counter + 1L
+            cluster_indices <- seg[i:best_end]
+            clusters[[cluster_counter]] <- create_cluster(cluster_indices, seg_classes[i:best_end], cluster_counter)
+            assigned[cluster_indices] <- TRUE
+            log_msg(sprintf("    [OK] Created cluster %d: %d elements, hom=%.3f",
+                            cluster_counter, cluster_size, best_hom))
+          }
+          i <- best_end + 1L
+        }
+      } else {
+        log_msg(sprintf("    -> Segment too small (%d < min_size=%d), will try Phase 4", n_seg, min_size))
+      }
+    }
+  }
+
+  # === PHASE 4: Final merge attempt ===
+
+  remaining <- which(!assigned)
+  if (length(remaining) > 0) {
+    log_msg(sprintf("\nPhase 4: Final merge attempt for %d elements", length(remaining)))
+    segments <- find_segments(remaining)
+
+    for (seg in segments) {
+      if (all(assigned[seg])) next
+      seg_classes <- class_labels[seg]
+
+      log_msg(sprintf("  Attempting to merge %d elements at positions %d-%d",
+                      length(seg), min(seg), max(seg)))
+
+      best_cid <- NULL
+      best_hom <- -1
+
+      for (cid in seq_along(clusters)) {
+        if (is.null(clusters[[cid]])) next
+        if (max(clusters[[cid]]$indices) == seg[1] - 1L) {
+          temp_hom <- calc_homogeneity(c(clusters[[cid]]$classes, seg_classes))
+          if (temp_hom > best_hom) {
+            best_cid <- cid
+            best_hom <- temp_hom
           }
         }
+      }
+
+      if (!is.null(best_cid) && best_hom >= hom_thresh) {
+        clusters[[best_cid]]$indices <- c(clusters[[best_cid]]$indices, seg)
+        clusters[[best_cid]]$classes <- c(clusters[[best_cid]]$classes, seg_classes)
+        assigned[seg] <- TRUE
+        log_msg(sprintf("    [OK] Merged into cluster %d (hom=%.3f)", clusters[[best_cid]]$id, best_hom))
       } else {
-        cluster_id <- 1
-        end_pos <- min(i + min_size - 1, n_elements)
-        clusters[[cluster_id]] <- list(
-          indices = i:end_pos,
-          classes = class_labels[i:end_pos]
-        )
-
-        hom_val <- calculate_homogeneity(class_labels[i:end_pos])
-        if (hom_val < hom_thresh) {
-          warning(sprintf(
-            "First cluster has homogeneity %.3f (threshold=%.3f)",
-            hom_val, hom_thresh
-          ))
-        }
-
-        i <- end_pos + 1
+        log_msg(if (is.null(best_cid)) "    [FAIL] No adjacent cluster found" else
+          sprintf("    [FAIL] Best merge would have hom=%.3f (< %.3f)", best_hom, hom_thresh))
       }
     }
   }
 
-  # === Post-processing: Merge small clusters ===
+  # === PHASE 5: Force cluster creation for unassigned elements ===
 
-  k <- 1
-  while (k <= length(clusters)) {
-    current_size <- length(clusters[[k]]$indices)
-    current_hom <- calculate_homogeneity(clusters[[k]]$classes)
+  remaining <- which(!assigned)
+  if (length(remaining) > 0) {
+    log_msg(sprintf("\nPhase 5: Creating clusters for %d unassigned elements by class", length(remaining)))
 
-    if (current_size < min_size) {
-      if (k > 1) {
-        merged_classes <- c(clusters[[k - 1]]$classes, clusters[[k]]$classes)
-        merged_hom <- calculate_homogeneity(merged_classes)
+    for (cls in unique(class_labels[remaining])) {
+      cls_indices <- which(class_labels == cls & !assigned)
+      if (length(cls_indices) == 0) next
 
-        clusters[[k - 1]]$indices <- c(clusters[[k - 1]]$indices, clusters[[k]]$indices)
-        clusters[[k - 1]]$classes <- merged_classes
-        clusters[[k]] <- NULL
-        clusters <- clusters[!vapply(clusters, is.null, FUN.VALUE = logical(1))]
+      segments <- find_segments(cls_indices)
+      log_msg(sprintf("  Class '%s': %d unassigned elements in %d segment(s)",
+                      cls, length(cls_indices), length(segments)))
 
-        if (merged_hom < hom_thresh) {
-          warning(sprintf(
-            "Merged cluster %d has homogeneity %.3f (threshold=%.3f)",
-            k - 1, merged_hom, hom_thresh
-          ))
-        }
-      } else if (k < length(clusters)) {
-        merged_classes <- c(clusters[[k]]$classes, clusters[[k + 1]]$classes)
-        merged_hom <- calculate_homogeneity(merged_classes)
+      for (seg in segments) {
+        cluster_counter <- cluster_counter + 1L
+        clusters[[cluster_counter]] <- create_cluster(seg, class_labels[seg], cluster_counter)
+        assigned[seg] <- TRUE
 
-        clusters[[k + 1]]$indices <- c(clusters[[k]]$indices, clusters[[k + 1]]$indices)
-        clusters[[k + 1]]$classes <- merged_classes
-        clusters[[k]] <- NULL
-        clusters <- clusters[!vapply(clusters, is.null, FUN.VALUE = logical(1))]
-
-        if (merged_hom < hom_thresh) {
-          warning(sprintf(
-            "Merged cluster %d has homogeneity %.3f (threshold=%.3f)",
-            k, merged_hom, hom_thresh
-          ))
-        }
-      } else {
-        warning(sprintf(
-          "Single cluster with size %d (min_size=%d)",
-          current_size, min_size
-        ))
-        k <- k + 1
+        log_msg(sprintf("    Created %s cluster %d at position%s %s",
+                        if (length(seg) == 1) "singleton" else "",
+                        cluster_counter,
+                        if (length(seg) > 1) "s" else "",
+                        if (length(seg) == 1) seg else sprintf("%d-%d", min(seg), max(seg))))
       }
-    } else {
-      k <- k + 1
     }
+    log_msg("  Phase 5 complete: All elements now assigned\n")
   }
 
-  # === OPTIMIZATION C: Pre-allocate data.frame using vectorized operations ===
+  # === PHASE 6: Intelligent cluster merging ===
+
+  if (length(clusters) > 1) {
+    log_msg("\nPhase 6: Intelligent cluster merging")
+    log_msg("  Rule: Protect complete-class clusters from contamination")
+
+    merged_any <- TRUE
+    iteration <- 0
+    max_iterations <- 10
+
+    while (merged_any && iteration < max_iterations) {
+      merged_any <- FALSE
+      iteration <- iteration + 1
+      log_msg(sprintf("\n  Iteration %d:", iteration))
+
+      i <- 1
+      while (i < length(clusters)) {
+        if (is.null(clusters[[i]]) || is.null(clusters[[i+1]])) {
+          i <- i + 1
+          next
+        }
+
+        cluster_i <- clusters[[i]]
+        cluster_j <- clusters[[i+1]]
+
+        if (max(cluster_i$indices) + 1 != min(cluster_j$indices)) {
+          i <- i + 1
+          next
+        }
+
+        is_i_complete <- is_complete_class_cluster(cluster_i$classes, class_total_counts)
+        is_j_complete <- is_complete_class_cluster(cluster_j$classes, class_total_counts)
+
+        merged_classes <- c(cluster_i$classes, cluster_j$classes)
+        merged_hom <- calc_homogeneity(merged_classes)
+
+        can_merge <- FALSE
+        reason <- ""
+
+        if (is_i_complete && is_j_complete) {
+          dom_i <- get_dominant(cluster_i$classes)
+          dom_j <- get_dominant(cluster_j$classes)
+          can_merge <- (dom_i == dom_j)
+          reason <- if (can_merge) sprintf("Both complete for same class '%s'", dom_i) else
+            sprintf("Both complete: '%s' (%d) and '%s' (%d) - cannot contaminate",
+                    dom_i, length(cluster_i$classes), dom_j, length(cluster_j$classes))
+
+        } else if (is_i_complete) {
+          dom_i <- get_dominant(cluster_i$classes)
+          can_merge <- all(cluster_j$classes == dom_i)
+          reason <- if (can_merge) sprintf("Cluster %d complete for '%s', cluster %d also only '%s'",
+                                           cluster_i$id, dom_i, cluster_j$id, dom_i) else
+                                             sprintf("Cluster %d is COMPLETE for '%s' (%d elements) - cannot add other classes",
+                                                     cluster_i$id, dom_i, length(cluster_i$classes))
+
+        } else if (is_j_complete) {
+          dom_j <- get_dominant(cluster_j$classes)
+          can_merge <- all(cluster_i$classes == dom_j)
+          reason <- if (can_merge) sprintf("Cluster %d complete for '%s', cluster %d also only '%s'",
+                                           cluster_j$id, dom_j, cluster_i$id, dom_j) else
+                                             sprintf("Cluster %d is COMPLETE for '%s' (%d elements) - cannot add other classes",
+                                                     cluster_j$id, dom_j, length(cluster_j$classes))
+
+        } else {
+          can_merge <- (merged_hom >= hom_thresh)
+          reason <- if (can_merge) {
+            sprintf("Non-complete clusters: hom_i=%.3f, hom_j=%.3f -> merged=%.3f >= %.3f",
+                    calc_homogeneity(cluster_i$classes), calc_homogeneity(cluster_j$classes),
+                    merged_hom, hom_thresh)
+          } else {
+            sprintf("Merged homogeneity %.3f < threshold %.3f", merged_hom, hom_thresh)
+          }
+        }
+
+        if (can_merge) {
+          old_id_i <- cluster_i$id
+          old_id_j <- cluster_j$id
+          clusters[[i]]$indices <- c(cluster_i$indices, cluster_j$indices)
+          clusters[[i]]$classes <- merged_classes
+          clusters[[i+1]] <- NULL
+          merged_any <- TRUE
+
+          log_msg(sprintf("    [OK] Merged clusters %d and %d (n=%d + %d = %d, hom=%.3f)",
+                          old_id_i, old_id_j, length(cluster_i$classes),
+                          length(cluster_j$classes), length(merged_classes), merged_hom))
+          if (reason != "") log_msg(sprintf("      Reason: %s", reason))
+          next
+        } else {
+          log_msg(sprintf("    [FAIL] Cannot merge clusters %d and %d", cluster_i$id, cluster_j$id))
+          if (reason != "") log_msg(sprintf("      Reason: %s", reason))
+        }
+        i <- i + 1
+      }
+
+      clusters <- clusters[!sapply(clusters, is.null)]
+      if (!merged_any) log_msg("    No more merges possible")
+    }
+
+    log_msg(sprintf("\n  Phase 6 complete after %d iteration(s)", iteration))
+    log_msg(sprintf("  Final cluster count: %d", length(clusters)))
+  }
+
+  # === FINALIZATION ===
+
+  clusters <- clusters[!sapply(clusters, is.null)]
+
+  if (length(clusters) > 0) {
+    order_idx <- order(sapply(clusters, function(cl) min(cl$indices)))
+    clusters <- clusters[order_idx]
+    for (k in seq_along(clusters)) clusters[[k]]$id <- k
+    log_msg("\nClusters reordered by dendrogram position")
+  }
 
   n_clusters <- length(clusters)
+  n_unassigned <- sum(!assigned)
 
-  cluster_ids <- integer(n_clusters)
-  n_elements_vec <- integer(n_clusters)
-  n_classes_vec <- integer(n_clusters)
-  dominant_classes <- character(n_clusters)
-  homogeneities <- numeric(n_clusters)
-  class_distributions <- character(n_clusters)
+  log_msg(sprintf("\n=== CLUSTERING COMPLETE ==="))
+  log_msg(sprintf("Total clusters: %d", n_clusters))
+  log_msg(sprintf("Unassigned elements: %d", n_unassigned))
 
-  for (k in seq_len(n_clusters)) {
-    cluster_info <- clusters[[k]]
-    classes <- cluster_info$classes
-    n_elem <- length(classes)
-    dom_class <- get_dominant_class(classes)
-    homogeneity <- calculate_homogeneity(classes)
+  if (n_unassigned > 0) {
+    warning("Some elements remain unassigned - this should not happen!", call. = FALSE)
+  }
 
-    class_counts <- table(classes)
-    n_classes <- length(class_counts)
+  # === BUILD OUTPUTS ===
 
-    class_distribution <- paste(
-      vapply(names(class_counts), function(cls) {
-        sprintf("%s(%d)", cls, class_counts[cls])
-      }, FUN.VALUE = character(1)),
-      collapse = ", "
-    )
+  cluster_assignment <- rep(NA_integer_, n_elements)
+  for (cid in seq_along(clusters)) {
+    cluster_assignment[clusters[[cid]]$indices] <- clusters[[cid]]$id
+  }
 
-    cluster_ids[k] <- k
-    n_elements_vec[k] <- n_elem
-    n_classes_vec[k] <- n_classes
-    dominant_classes[k] <- dom_class
-    homogeneities[k] <- homogeneity
-    class_distributions[k] <- class_distribution
+  cluster_orig <- if (!is.null(dendro_order)) {
+    cluster_orig <- rep(NA_integer_, n_elements)
+    for (i in seq_len(n_elements)) cluster_orig[dendro_order[i]] <- cluster_assignment[i]
+    cluster_orig
+  } else {
+    cluster_assignment
   }
 
   cluster_summary <- data.frame(
-    cluster_id = cluster_ids,
-    n_elements = n_elements_vec,
-    n_classes = n_classes_vec,
-    dominant_class = dominant_classes,
-    homogeneity = homogeneities,
-    class_distribution = class_distributions,
+    cluster_id = integer(n_clusters),
+    n_elements = integer(n_clusters),
+    dominant_class = character(n_clusters),
+    homogeneity = numeric(n_clusters),
+    n_classes = integer(n_clusters),
+    class_composition = character(n_clusters),
+    is_complete_class = logical(n_clusters),
     stringsAsFactors = FALSE
   )
 
-  # === Final Validation ===
+  if (n_clusters > 0) {
+    for (k in seq_len(n_clusters)) {
+      cl <- clusters[[k]]
+      class_table <- table(cl$classes)
+      dominant_class <- names(which.max(class_table))
+      is_complete <- class_table[dominant_class] == class_total_counts[dominant_class]
 
-  total_elements <- sum(cluster_summary$n_elements)
-  if (total_elements != n_elements) {
-    stop(sprintf(
-      "INTERNAL ERROR: Assignment mismatch - expected %d elements, got %d",
-      n_elements, total_elements
-    ))
-  }
-
-  # === Build cluster assignment vectors ===
-
-  cluster_assignment_dendro_order <- rep(NA_integer_, n_elements)
-  current_pos <- 1
-
-  for (row_idx in seq_len(nrow(cluster_summary))) {
-    cluster_id <- cluster_summary$cluster_id[row_idx]
-    n_elem <- cluster_summary$n_elements[row_idx]
-    end_pos <- current_pos + n_elem - 1
-    cluster_assignment_dendro_order[current_pos:end_pos] <- cluster_id
-    current_pos <- end_pos + 1
-  }
-
-  # Map back to original order if dendro_order provided
-  cluster_assignment_original_order <- NULL
-  if (!is.null(dendro_order)) {
-    cluster_assignment_original_order <- rep(NA_integer_, n_elements)
-    cluster_assignment_original_order[dendro_order] <- cluster_assignment_dendro_order
-  }
-
-  # === Create detailed element assignment ===
-
-  element_assignment <- NULL
-  if (!is.null(dendro_order)) {
-    element_assignment <- data.frame(
-      original_index = 1:n_elements,
-      sequence_name = if (!is.null(sequence_names)) sequence_names else paste0("seq_", 1:n_elements),
-      dendro_index = dendro_order,
-      class = class_labels,
-      cluster = cluster_assignment_original_order,
-      stringsAsFactors = FALSE
-    )
-
-    # OPTIMIZATION D: Use match() instead of merge() for better performance
-    idx <- match(element_assignment$cluster, cluster_summary$cluster_id)
-    element_assignment$dominant_class <- cluster_summary$dominant_class[idx]
-    element_assignment$homogeneity <- cluster_summary$homogeneity[idx]
-
-    element_assignment <- element_assignment[order(element_assignment$original_index), ]
-    rownames(element_assignment) <- NULL
-  }
-
-  # === Add cluster to data_result metadata ===
-
-  if (!is.null(data_result)) {
-    data_result$metadata$cluster <- cluster_assignment_original_order
-  }
-
-  # === Summary messages ===
-
-  n_below_minsize <- sum(cluster_summary$n_elements < min_size)
-  n_below_hom <- sum(cluster_summary$homogeneity < hom_thresh)
-
-  if (verbose) {
-    message("\n=== Dendrogram Clustering Summary ===")
-    message(sprintf("Total elements: %d", n_elements))
-    message(sprintf("Total clusters: %d", nrow(cluster_summary)))
-    message(sprintf("Pure clusters (homog=1.0): %d", sum(cluster_summary$homogeneity == 1.0)))
-    message(sprintf("Homogeneity threshold: %.2f", hom_thresh))
-    message(sprintf("Minimum cluster size: %d", min_size))
-    message(sprintf("Average homogeneity: %.4f", round(mean(cluster_summary$homogeneity), 4)))
-    message(sprintf("Min/Max cluster sizes: %d / %d",
-                    min(cluster_summary$n_elements), max(cluster_summary$n_elements)))
-    message(sprintf("Min/Max homogeneity: %.4f / %.4f",
-                    min(cluster_summary$homogeneity), max(cluster_summary$homogeneity)))
-
-    if (n_below_hom > 0) {
-      message(sprintf("WARNING: %d cluster(s) below homogeneity threshold", n_below_hom))
+      cluster_summary$cluster_id[k] <- k
+      cluster_summary$n_elements[k] <- length(cl$classes)
+      cluster_summary$dominant_class[k] <- dominant_class
+      cluster_summary$homogeneity[k] <- calc_homogeneity(cl$classes)
+      cluster_summary$n_classes[k] <- length(class_table)
+      cluster_summary$class_composition[k] <- paste(names(class_table), class_table, sep = ":", collapse = "; ")
+      cluster_summary$is_complete_class[k] <- is_complete
     }
-    if (n_below_minsize > 0) {
-      message(sprintf("WARNING: %d cluster(s) below minimum size", n_below_minsize))
-    }
-
-    if (!is.null(dendro_order)) {
-      message("\n=== Cluster Assignment Summary ===")
-      message(sprintf("Total sequences assigned: %d", n_elements))
-      message("Cluster distribution:")
-      cluster_dist <- table(cluster_assignment_original_order)
-      for (cid in names(cluster_dist)) {
-        message(sprintf("  Cluster %s: %d sequences", cid, cluster_dist[cid]))
-      }
-    }
-
-    if (!is.null(data_result)) {
-      message("\nCluster column successfully added to data_result$metadata")
-    }
-
-    message("")
   }
 
-  # === Return results ===
+  if (is.null(sequence_names)) {
+    sequence_names <- sprintf("seq_%d", seq_len(n_elements))
+  }
 
-  result <- list(
-    cluster_summary = cluster_summary,
-    element_assignment = element_assignment,
-    data_result = data_result,
-    cluster_assignment_dendro_order = cluster_assignment_dendro_order,
-    cluster_assignment_original_order = cluster_assignment_original_order
+  element_assignment <- data.frame(
+    sequence_name = sequence_names,
+    dendro_index = seq_len(n_elements),
+    class = class_labels,
+    cluster = cluster_assignment,
+    stringsAsFactors = FALSE
   )
 
-  class(result) <- c("cluster_dendrogram_result", "list")
-
-  invisible(result)
-}
-
-
-# ==============================================================================
-# S3 PRINT METHOD
-# ==============================================================================
-
-#' Print method for cluster_dendrogram_result objects
-#'
-#' Displays a summary of the dendrogram clustering analysis result.
-#'
-#' @param x A cluster_dendrogram_result object created by \code{\link{cluster_dendrogram}}.
-#' @param ... Additional arguments (not currently used).
-#'
-#' @return The input object \code{x}, invisibly.
-#'
-#' @method print cluster_dendrogram_result
-#' @export
-print.cluster_dendrogram_result <- function(x, ...) {
-  cat("Dendrogram Clustering Result\n")
-  cat("============================\n\n")
-
-  cat("Number of clusters: ", nrow(x$cluster_summary), "\n")
-  cat("Total elements:     ", sum(x$cluster_summary$n_elements), "\n")
-
-  if (!is.null(x$cluster_summary)) {
-    mean_hom <- mean(x$cluster_summary$homogeneity, na.rm = TRUE)
-    cat("Mean homogeneity:   ", round(mean_hom, 3), "\n")
+  if (!is.null(data_result)) {
+    data_result$metadata$cluster <- cluster_orig
   }
 
-  cat("\nCluster Summary:\n")
-  cat(strrep("-", 80), "\n")
+  structure(
+    list(
+      dendrogram = dendrogram,
+      clusters = clusters,
+      cluster_summary = cluster_summary,
+      element_assignment = element_assignment,
+      data_result = data_result,
+      cluster_assignment_dendro_order = cluster_assignment,
+      cluster_assignment_original_order = cluster_orig,
+      unassigned_elements = which(!assigned),
+      n_unassigned = n_unassigned,
+      hom_thresh = hom_thresh,
+      min_size = min_size,
+      n_elements = n_elements,
+      valid_clusters = clusters
+    ),
+    class = "cluster_dendrogram_result"
+  )
+}
 
-  # Imprimir sem parâmetro 'n'
-  print(x$cluster_summary, na.print = "")
+# === S3 METHODS ===
 
-  cat(strrep("-", 80), "\n")
+#' @export
+print.cluster_dendrogram_result <- function(x, ...) {
+  cat("\nDendrogram Clustering Result\n")
+  cat("=============================\n\n")
+  cat(sprintf("Total elements:     %d\n", x$n_elements))
+  cat(sprintf("Total clusters:     %d\n", nrow(x$cluster_summary)))
+  cat(sprintf("Unassigned:         %d\n", x$n_unassigned))
+  cat(sprintf("Min size:           %d\n", x$min_size))
+  cat(sprintf("Hom threshold:      %.3f\n", x$hom_thresh))
+
+  if (nrow(x$cluster_summary) > 0) {
+    cat("\nCluster Summary:\n")
+    print(x$cluster_summary, row.names = FALSE)
+
+    complete_clusters <- x$cluster_summary[x$cluster_summary$is_complete_class, ]
+    if (nrow(complete_clusters) > 0) {
+      cat("\n[OK] Complete-class clusters (protected from contamination):\n")
+      for (i in 1:nrow(complete_clusters)) {
+        cat(sprintf("  Cluster %d: ALL %d elements of class '%s'\n",
+                    complete_clusters$cluster_id[i],
+                    complete_clusters$n_elements[i],
+                    complete_clusters$dominant_class[i]))
+      }
+    }
+  }
+
+  if (x$n_unassigned > 0) {
+    cat("\n[WARNING] Some elements could not be assigned to clusters\n")
+  }
+
   invisible(x)
 }
 
-
-# ==============================================================================
-# S3 SUMMARY METHOD
-# ==============================================================================
-
-#' Summary method for cluster_dendrogram_result objects
-#'
-#' Provides detailed statistical summary of the dendrogram clustering result.
-#'
-#' @param object A cluster_dendrogram_result object created by \code{\link{cluster_dendrogram}}.
-#' @param ... Additional arguments (not currently used).
-#'
-#' @return The object invisibly with additional statistics printed.
-#'
 #' @export
-#' @method summary cluster_dendrogram_result
 summary.cluster_dendrogram_result <- function(object, ...) {
-  cat("Dendrogram Clustering Analysis Summary\n")
-  cat("======================================\n\n")
+  cat("\nClustering Summary\n")
+  cat("------------------\n")
+  cat(sprintf("Elements:  %d\n", object$n_elements))
+  cat(sprintf("Clusters:  %d\n", nrow(object$cluster_summary)))
+  cat(sprintf("Unassigned: %d\n", object$n_unassigned))
 
-  cat("Cluster Statistics:\n")
-  cat("  Number of clusters: ", nrow(object$cluster_summary), "\n")
-  cat("  Total elements: ", sum(object$cluster_summary$n_elements), "\n")
-  cat("  Pure clusters (homogeneity = 1.0): ",
-      sum(object$cluster_summary$homogeneity == 1.0), "\n\n")
-
-  cat("Cluster Size Distribution:\n")
-  size_summary <- summary(object$cluster_summary$n_elements)
-  print(size_summary)
-
-  cat("\nHomogeneity Distribution:\n")
-  hom_summary <- summary(object$cluster_summary$homogeneity)
-  print(hom_summary)
-
-  cat("\nClass Distribution Across Clusters:\n")
-  if (!is.null(object$element_assignment)) {
-    class_table <- table(object$element_assignment$class, object$element_assignment$cluster)
-    print(class_table)
-  } else {
-    cat("  (Not available - dendro_order was not provided)\n")
-  }
-
-  cat("\nCluster Details:\n")
-  for (i in seq_len(nrow(object$cluster_summary))) {
-    row <- object$cluster_summary[i, ]
-    cat(sprintf("  Cluster %d: %d elements, %d class(es), %s (homog=%.3f)\n",
-                row$cluster_id, row$n_elements, row$n_classes,
-                row$dominant_class, row$homogeneity))
+  if (nrow(object$cluster_summary) > 0) {
+    cat(sprintf("Mean homogeneity: %.3f\n", mean(object$cluster_summary$homogeneity)))
+    cat(sprintf("Mean size: %.1f\n", mean(object$cluster_summary$n_elements)))
+    cat(sprintf("Size range: %d - %d\n",
+                min(object$cluster_summary$n_elements),
+                max(object$cluster_summary$n_elements)))
+    cat(sprintf("Complete-class clusters: %d\n", sum(object$cluster_summary$is_complete_class)))
   }
 
   invisible(object)

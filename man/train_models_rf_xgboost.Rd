@@ -13,9 +13,10 @@ train_models_rf_xgboost(
 )
 }
 \arguments{
-\item{dataset_traintest}{List containing classification_dataset and validation_dataset.}
+\item{dataset_traintest}{List from select_sample_train_validation() containing
+classification_dataset and validation_dataset.}
 
-\item{selected_motifs}{List of character vectors containing selected motifs per class.}
+\item{selected_motifs}{List from select_motifs() with character vectors of motifs per class.}
 
 \item{prop_train}{Numeric. Proportion for training (0-1). Default: 0.7.}
 
@@ -24,7 +25,13 @@ train_models_rf_xgboost(
 \item{seed}{Integer. Random seed for reproducibility. Default: 123.}
 }
 \value{
-Object of class train_models_rf_xgboost with models and predictions.
+Object of class "train_models_rf_xgboost" with:
+\itemize{
+\item model_rf: Trained Random Forest model
+\item model_xgb: Trained XGBoost model
+\item model_comparison: Data frame with performance metrics
+\item All predictions and confusion matrices
+}
 }
 \description{
 Train Random Forest and XGBoost Models

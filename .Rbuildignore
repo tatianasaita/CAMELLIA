@@ -3,3 +3,4 @@
 ^codecov\.yml$
 ^NAMESPACE\.backup$
 ^.*\.RData$
+^\.github$

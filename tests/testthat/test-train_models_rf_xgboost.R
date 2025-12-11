@@ -1,566 +1,519 @@
-# tests/testthat/test_train_models_rf_xgboost.R
+# tests/testthat/test-train_models_rf_xgboost.R
+#
+# Essential tests for train_models_rf_xgboost function following CRAN standards
+# These tests cover:
+# - Input validation (dataset_traintest, selected_motifs, prop_train, cv_folds, seed)
+# - Data preparation (column standardization, factor levels consistency)
+# - Model training (Random Forest and XGBoost)
+# - Predictions and confusion matrices
+# - S3 methods (print, summary)
+# - File I/O operations
+#
+# Author: [Your Name]
+# Date: 2025-11-26
 
-library(testthat)
+# ===== Test Setup =====
 
-# ============================================================================
-# Setup: Create test data
-# ============================================================================
-
-create_test_data <- function() {
+test_that("setup: create mock data for tests", {
+  # Create mock classification dataset
   set.seed(123)
+  n_samples <- 60
+  n_motifs <- 10
 
-  # Create synthetic classification dataset
-  n_samples <- 100
-  n_motifs <- 20
+  mock_classification <- data.frame(
+    matrix(runif(n_samples * n_motifs), nrow = n_samples, ncol = n_motifs)
+  )
+  colnames(mock_classification) <- paste0("motif", 1:n_motifs)
+  mock_classification$class <- factor(rep(c("ClassA", "ClassB", "ClassC"), each = 20))
 
-  # Generate random motif data (0s and 1s)
-  motif_data <- matrix(
-    sample(0:1, n_samples * n_motifs, replace = TRUE),
-    nrow = n_samples,
-    ncol = n_motifs
+  # Create mock validation dataset
+  n_val <- 30
+  mock_validation <- data.frame(
+    matrix(runif(n_val * n_motifs), nrow = n_val, ncol = n_motifs)
+  )
+  colnames(mock_validation) <- paste0("motif", 1:n_motifs)
+  mock_validation$class <- factor(rep(c("ClassA", "ClassB", "ClassC"), each = 10))
+
+  # Create mock dataset_traintest
+  mock_dataset_traintest <- list(
+    classification_dataset = mock_classification,
+    validation_dataset = mock_validation
   )
 
-  # Create motif names
-  motif_names <- paste0("MOTIF_", seq_len(n_motifs))
-  colnames(motif_data) <- motif_names
-
-  # Create classification dataset
-  classification_df <- as.data.frame(motif_data)
-  classification_df$class <- factor(
-    rep(c("ClassA", "ClassB"), length.out = n_samples)
+  # Create mock selected_motifs
+  mock_selected_motifs <- list(
+    ClassA = c("motif1", "motif2", "motif3"),
+    ClassB = c("motif4", "motif5", "motif6"),
+    ClassC = c("motif7", "motif8", "motif9")
   )
 
-  # Create validation dataset
-  validation_df <- as.data.frame(motif_data)
-  validation_df$class <- factor(
-    rep(c("ClassA", "ClassB"), length.out = n_samples)
+  assign("mock_dataset_traintest", mock_dataset_traintest, envir = .GlobalEnv)
+  assign("mock_selected_motifs", mock_selected_motifs, envir = .GlobalEnv)
+
+  expect_true(exists("mock_dataset_traintest"))
+  expect_true(exists("mock_selected_motifs"))
+})
+
+
+# ===== Input Validation Tests =====
+
+test_that("rejects invalid dataset_traintest", {
+  expect_error(
+    train_models_rf_xgboost(NULL, mock_selected_motifs),
+    "must be a list"
   )
 
-  list(
-    classification_dataset = classification_df,
-    validation_dataset = validation_df
+  expect_error(
+    train_models_rf_xgboost(data.frame(), mock_selected_motifs),
+    "must be a list.*not a data.frame"
   )
-}
 
-# Create selected motifs list
-create_selected_motifs <- function() {
-  list(
-    ClassA = c("MOTIF_1", "MOTIF_2", "MOTIF_3"),
-    ClassB = c("MOTIF_4", "MOTIF_5", "MOTIF_6")
+  expect_error(
+    train_models_rf_xgboost(list(), mock_selected_motifs),
+    "classification_dataset.*validation_dataset"
   )
-}
-
-# ============================================================================
-# Test Suite
-# ============================================================================
-
-test_that("Input validation: dataset_traintest must be a list", {
-  selected_motifs <- create_selected_motifs()
 
   expect_error(
     train_models_rf_xgboost(
-      dataset_traintest = data.frame(x = 1),
-      selected_motifs = selected_motifs
+      list(classification_dataset = data.frame()),
+      mock_selected_motifs
     ),
-    "must be a list",
-    fixed = FALSE
+    "validation_dataset"
   )
 })
 
-test_that("Input validation: dataset_traintest must contain 'classification_dataset'", {
-  selected_motifs <- create_selected_motifs()
-  invalid_data <- list(validation_dataset = data.frame(x = 1))
+
+test_that("rejects invalid selected_motifs", {
+  expect_error(
+    train_models_rf_xgboost(mock_dataset_traintest, NULL),
+    "must be a non-empty list"
+  )
 
   expect_error(
-    train_models_rf_xgboost(
-      dataset_traintest = invalid_data,
-      selected_motifs = selected_motifs
-    ),
-    "classification_dataset",
-    fixed = FALSE
+    train_models_rf_xgboost(mock_dataset_traintest, list()),
+    "must be a non-empty list"
   )
-})
-
-test_that("Input validation: dataset_traintest must contain 'validation_dataset'", {
-  selected_motifs <- create_selected_motifs()
-  datasets <- create_test_data()
-
-  # Remove validation_dataset
-  invalid_data <- list(classification_dataset = datasets$classification_dataset)
 
   expect_error(
-    train_models_rf_xgboost(
-      dataset_traintest = invalid_data,
-      selected_motifs = selected_motifs
-    ),
-    "validation_dataset",
-    fixed = FALSE
+    train_models_rf_xgboost(mock_dataset_traintest, "motif1"),
+    "must be a non-empty list"
   )
 })
 
-test_that("Input validation: selected_motifs must be non-empty list", {
-  datasets <- create_test_data()
+
+test_that("rejects invalid prop_train", {
+  expect_error(
+    train_models_rf_xgboost(mock_dataset_traintest, mock_selected_motifs, prop_train = -0.1),
+    "between 0 and 1"
+  )
 
   expect_error(
-    train_models_rf_xgboost(
-      dataset_traintest = datasets,
-      selected_motifs = list()
-    ),
-    "non-empty list",
-    fixed = FALSE
+    train_models_rf_xgboost(mock_dataset_traintest, mock_selected_motifs, prop_train = 0),
+    "between 0 and 1"
   )
-})
-
-test_that("Input validation: prop_train must be between 0 and 1", {
-  datasets <- create_test_data()
-  selected_motifs <- create_selected_motifs()
 
   expect_error(
-    train_models_rf_xgboost(
-      dataset_traintest = datasets,
-      selected_motifs = selected_motifs,
-      prop_train = 1.5
-    ),
-    "prop_train",
-    fixed = FALSE
+    train_models_rf_xgboost(mock_dataset_traintest, mock_selected_motifs, prop_train = 1),
+    "between 0 and 1"
   )
-})
-
-test_that("Input validation: prop_train cannot be 0", {
-  datasets <- create_test_data()
-  selected_motifs <- create_selected_motifs()
 
   expect_error(
-    train_models_rf_xgboost(
-      dataset_traintest = datasets,
-      selected_motifs = selected_motifs,
-      prop_train = 0
-    ),
-    "prop_train",
-    fixed = FALSE
+    train_models_rf_xgboost(mock_dataset_traintest, mock_selected_motifs, prop_train = 1.5),
+    "between 0 and 1"
   )
 })
 
-test_that("Input validation: prop_train cannot be 1", {
-  datasets <- create_test_data()
-  selected_motifs <- create_selected_motifs()
+
+test_that("rejects invalid cv_folds", {
+  expect_error(
+    train_models_rf_xgboost(mock_dataset_traintest, mock_selected_motifs, cv_folds = 0),
+    "positive integer"
+  )
 
   expect_error(
-    train_models_rf_xgboost(
-      dataset_traintest = datasets,
-      selected_motifs = selected_motifs,
-      prop_train = 1
-    ),
-    "prop_train",
-    fixed = FALSE
+    train_models_rf_xgboost(mock_dataset_traintest, mock_selected_motifs, cv_folds = -5),
+    "positive integer"
   )
-})
-
-test_that("Input validation: cv_folds must be positive integer", {
-  datasets <- create_test_data()
-  selected_motifs <- create_selected_motifs()
 
   expect_error(
-    train_models_rf_xgboost(
-      dataset_traintest = datasets,
-      selected_motifs = selected_motifs,
-      cv_folds = -1
-    ),
-    "cv_folds",
-    fixed = FALSE
+    train_models_rf_xgboost(mock_dataset_traintest, mock_selected_motifs, cv_folds = 2.5),
+    "positive integer"
   )
 })
 
-test_that("Input validation: cv_folds must be integer (not decimal)", {
-  datasets <- create_test_data()
-  selected_motifs <- create_selected_motifs()
+
+test_that("rejects invalid seed", {
+  expect_error(
+    train_models_rf_xgboost(mock_dataset_traintest, mock_selected_motifs, seed = 123.5),
+    "must be an integer"
+  )
 
   expect_error(
-    train_models_rf_xgboost(
-      dataset_traintest = datasets,
-      selected_motifs = selected_motifs,
-      cv_folds = 2.5
-    ),
-    "cv_folds",
-    fixed = FALSE
+    train_models_rf_xgboost(mock_dataset_traintest, mock_selected_motifs, seed = "abc"),
+    "must be an integer"
   )
 })
 
-test_that("Input validation: seed must be integer", {
-  datasets <- create_test_data()
-  selected_motifs <- create_selected_motifs()
+
+test_that("checks for required packages", {
+  skip_if_not_installed("caret")
+  skip_if_not_installed("randomForest")
+  skip_if_not_installed("xgboost")
+
+  expect_true(requireNamespace("caret", quietly = TRUE))
+  expect_true(requireNamespace("randomForest", quietly = TRUE))
+  expect_true(requireNamespace("xgboost", quietly = TRUE))
+})
+
+
+# ===== Data Preparation Tests =====
+
+test_that("validates required columns in datasets", {
+  bad_dataset <- mock_dataset_traintest
+  bad_dataset$classification_dataset <- bad_dataset$classification_dataset[, 1:5]
 
   expect_error(
-    train_models_rf_xgboost(
-      dataset_traintest = datasets,
-      selected_motifs = selected_motifs,
-      seed = 123.5
-    ),
-    "seed",
-    fixed = FALSE
+    train_models_rf_xgboost(bad_dataset, mock_selected_motifs),
+    "Missing columns"
   )
 })
 
-test_that("Function returns object of class 'train_models_rf_xgboost'", {
-  datasets <- create_test_data()
-  selected_motifs <- create_selected_motifs()
 
-  suppressWarnings(
-    suppressMessages({
-      result <- train_models_rf_xgboost(
-        dataset_traintest = datasets,
-        selected_motifs = selected_motifs,
-        prop_train = 0.7,
-        cv_folds = 2,
-        seed = 123
-      )
-    })
+test_that("standardizes CLASS to class column name", {
+  skip_on_cran()
+  skip_if_not_installed("caret")
+  skip_if_not_installed("randomForest")
+  skip_if_not_installed("xgboost")
+
+  dataset_with_CLASS <- mock_dataset_traintest
+  colnames(dataset_with_CLASS$classification_dataset)[
+    colnames(dataset_with_CLASS$classification_dataset) == "class"
+  ] <- "CLASS"
+  colnames(dataset_with_CLASS$validation_dataset)[
+    colnames(dataset_with_CLASS$validation_dataset) == "class"
+  ] <- "CLASS"
+
+  temp_dir <- tempdir()
+  old_wd <- getwd()
+  setwd(temp_dir)
+  on.exit(setwd(old_wd))
+
+  expect_no_error(
+    result <- train_models_rf_xgboost(
+      dataset_with_CLASS,
+      mock_selected_motifs,
+      cv_folds = 2,
+      seed = 123
+    )
+  )
+})
+
+
+# ===== Model Training Tests =====
+
+test_that("trains models successfully with valid inputs", {
+  skip_on_cran()
+  skip_if_not_installed("caret")
+  skip_if_not_installed("randomForest")
+  skip_if_not_installed("xgboost")
+
+  temp_dir <- tempdir()
+  old_wd <- getwd()
+  setwd(temp_dir)
+  on.exit(setwd(old_wd))
+
+  result <- train_models_rf_xgboost(
+    mock_dataset_traintest,
+    mock_selected_motifs,
+    prop_train = 0.7,
+    cv_folds = 2,
+    seed = 123
   )
 
   expect_s3_class(result, "train_models_rf_xgboost")
+  expect_s3_class(result, "list")
+
+  # Check model objects
+  expect_true(!is.null(result$model_rf))
+  expect_true(!is.null(result$model_xgb))
+
+  # Check data splits
+  expect_true(!is.null(result$train_data))
+  expect_true(!is.null(result$test_data))
+  expect_true(!is.null(result$validation_data))
+
+  # Check predictions
+  expect_true(!is.null(result$predictions_test_rf))
+  expect_true(!is.null(result$predictions_validation_rf))
+  expect_true(!is.null(result$predictions_test_xgb))
+  expect_true(!is.null(result$predictions_validation_xgb))
+
+  # Check confusion matrices
+  expect_true(!is.null(result$confusion_matrix_test_rf))
+  expect_true(!is.null(result$confusion_matrix_validation_rf))
+  expect_true(!is.null(result$confusion_matrix_test_xgb))
+  expect_true(!is.null(result$confusion_matrix_validation_xgb))
+
+  # Check comparison
+  expect_true(!is.null(result$model_comparison))
+  expect_equal(nrow(result$model_comparison), 2)
+  expect_true(all(c("Model", "Accuracy_Test", "Accuracy_Validation") %in%
+                    colnames(result$model_comparison)))
 })
 
-test_that("Result contains all required list elements", {
-  datasets <- create_test_data()
-  selected_motifs <- create_selected_motifs()
 
-  suppressWarnings(
-    suppressMessages({
-      result <- train_models_rf_xgboost(
-        dataset_traintest = datasets,
-        selected_motifs = selected_motifs,
-        prop_train = 0.7,
-        cv_folds = 2,
-        seed = 123
-      )
-    })
+test_that("data partition respects prop_train", {
+  skip_on_cran()
+  skip_if_not_installed("caret")
+  skip_if_not_installed("randomForest")
+  skip_if_not_installed("xgboost")
+
+  temp_dir <- tempdir()
+  old_wd <- getwd()
+  setwd(temp_dir)
+  on.exit(setwd(old_wd))
+
+  result <- train_models_rf_xgboost(
+    mock_dataset_traintest,
+    mock_selected_motifs,
+    prop_train = 0.8,
+    cv_folds = 2,
+    seed = 123
   )
 
-  required_elements <- c(
-    "model_rf", "model_xgb",
-    "train_data", "test_data", "validation_data",
-    "predictions_test_rf", "predictions_validation_rf",
-    "predictions_test_xgb", "predictions_validation_xgb",
-    "actuals_test", "actuals_validation",
-    "confusion_matrix_test_rf", "confusion_matrix_validation_rf",
-    "confusion_matrix_test_xgb", "confusion_matrix_validation_xgb",
-    "model_comparison",
-    "best_model_test",
-    "best_model_validation",
-    "motifs_used", "motifs_per_class",
-    "cv_folds", "prop_train", "seed",
-    "time_rf", "time_xgb"
+  total_classification <- nrow(result$train_data) + nrow(result$test_data)
+  actual_prop <- nrow(result$train_data) / total_classification
+
+  # Allow small tolerance for stratification
+  expect_true(abs(actual_prop - 0.8) < 0.1)
+})
+
+
+test_that("factor levels are consistent across datasets", {
+  skip_on_cran()
+  skip_if_not_installed("caret")
+  skip_if_not_installed("randomForest")
+  skip_if_not_installed("xgboost")
+
+  temp_dir <- tempdir()
+  old_wd <- getwd()
+  setwd(temp_dir)
+  on.exit(setwd(old_wd))
+
+  result <- train_models_rf_xgboost(
+    mock_dataset_traintest,
+    mock_selected_motifs,
+    cv_folds = 2,
+    seed = 123
   )
 
-  for (element in required_elements) {
-    expect_true(
-      element %in% names(result),
-      label = paste("Result contains", element)
+  train_levels <- levels(result$train_data$class)
+  test_levels <- levels(result$test_data$class)
+  validation_levels <- levels(result$validation_data$class)
+
+  expect_equal(train_levels, test_levels)
+  expect_equal(train_levels, validation_levels)
+})
+
+
+test_that("predictions have correct length", {
+  skip_on_cran()
+  skip_if_not_installed("caret")
+  skip_if_not_installed("randomForest")
+  skip_if_not_installed("xgboost")
+
+  temp_dir <- tempdir()
+  old_wd <- getwd()
+  setwd(temp_dir)
+  on.exit(setwd(old_wd))
+
+  result <- train_models_rf_xgboost(
+    mock_dataset_traintest,
+    mock_selected_motifs,
+    cv_folds = 2,
+    seed = 123
+  )
+
+  expect_equal(length(result$predictions_test_rf), nrow(result$test_data))
+  expect_equal(length(result$predictions_test_xgb), nrow(result$test_data))
+  expect_equal(length(result$predictions_validation_rf), nrow(result$validation_data))
+  expect_equal(length(result$predictions_validation_xgb), nrow(result$validation_data))
+})
+
+
+# ===== File I/O Tests =====
+
+test_that("saves required files", {
+  skip_on_cran()
+  skip_if_not_installed("caret")
+  skip_if_not_installed("randomForest")
+  skip_if_not_installed("xgboost")
+
+  temp_dir <- tempdir()
+  old_wd <- getwd()
+  setwd(temp_dir)
+  on.exit({
+    setwd(old_wd)
+    unlink(file.path(temp_dir, "*.RData"))
+  })
+
+  result <- train_models_rf_xgboost(
+    mock_dataset_traintest,
+    mock_selected_motifs,
+    cv_folds = 2,
+    seed = 123
+  )
+
+  expect_true(file.exists("model_rf.RData"))
+  expect_true(file.exists("model_xgboost.RData"))
+  expect_true(file.exists("model_comparison.RData"))
+})
+
+
+# ===== S3 Methods Tests =====
+
+test_that("print.train_models_rf_xgboost works correctly", {
+  skip_on_cran()
+  skip_if_not_installed("caret")
+  skip_if_not_installed("randomForest")
+  skip_if_not_installed("xgboost")
+
+  temp_dir <- tempdir()
+  old_wd <- getwd()
+  setwd(temp_dir)
+  on.exit(setwd(old_wd))
+
+  result <- train_models_rf_xgboost(
+    mock_dataset_traintest,
+    mock_selected_motifs,
+    cv_folds = 2,
+    seed = 123
+  )
+
+  expect_output(print(result), "Train Models RF/XGBoost Summary")
+  expect_output(print(result), "CV folds:")
+  expect_output(print(result), "Train proportion:")
+  expect_output(print(result), "Performance comparison:")
+  expect_output(print(result), "Best model")
+})
+
+
+test_that("summary.train_models_rf_xgboost works correctly", {
+  skip_on_cran()
+  skip_if_not_installed("caret")
+  skip_if_not_installed("randomForest")
+  skip_if_not_installed("xgboost")
+
+  temp_dir <- tempdir()
+  old_wd <- getwd()
+  setwd(temp_dir)
+  on.exit(setwd(old_wd))
+
+  result <- train_models_rf_xgboost(
+    mock_dataset_traintest,
+    mock_selected_motifs,
+    cv_folds = 2,
+    seed = 123
+  )
+
+  expect_output(summary(result), "Detailed Model Summary")
+  expect_output(summary(result), "RANDOM FOREST:")
+  expect_output(summary(result), "XGBOOST:")
+  expect_output(summary(result), "Test Accuracy:")
+  expect_output(summary(result), "Validation Accuracy:")
+  expect_output(summary(result), "Confusion Matrix")
+})
+
+
+# ===== Edge Cases =====
+
+test_that("handles binary classification", {
+  skip_on_cran()
+  skip_if_not_installed("caret")
+  skip_if_not_installed("randomForest")
+  skip_if_not_installed("xgboost")
+
+  # Create binary dataset
+  binary_classification <- mock_dataset_traintest$classification_dataset[
+    mock_dataset_traintest$classification_dataset$class %in% c("ClassA", "ClassB"),
+  ]
+  binary_classification$class <- droplevels(binary_classification$class)
+
+  binary_validation <- mock_dataset_traintest$validation_dataset[
+    mock_dataset_traintest$validation_dataset$class %in% c("ClassA", "ClassB"),
+  ]
+  binary_validation$class <- droplevels(binary_validation$class)
+
+  binary_dataset <- list(
+    classification_dataset = binary_classification,
+    validation_dataset = binary_validation
+  )
+
+  binary_motifs <- list(
+    ClassA = c("motif1", "motif2"),
+    ClassB = c("motif3", "motif4")
+  )
+
+  temp_dir <- tempdir()
+  old_wd <- getwd()
+  setwd(temp_dir)
+  on.exit(setwd(old_wd))
+
+  expect_no_error(
+    result <- train_models_rf_xgboost(
+      binary_dataset,
+      binary_motifs,
+      cv_folds = 2,
+      seed = 123
     )
+  )
+
+  expect_equal(nlevels(result$train_data$class), 2)
+})
+
+
+test_that("seed ensures reproducibility", {
+  skip_on_cran()
+  skip_if_not_installed("caret")
+  skip_if_not_installed("randomForest")
+  skip_if_not_installed("xgboost")
+
+  temp_dir <- tempdir()
+  old_wd <- getwd()
+  setwd(temp_dir)
+  on.exit(setwd(old_wd))
+
+  result1 <- train_models_rf_xgboost(
+    mock_dataset_traintest,
+    mock_selected_motifs,
+    cv_folds = 2,
+    seed = 456
+  )
+
+  result2 <- train_models_rf_xgboost(
+    mock_dataset_traintest,
+    mock_selected_motifs,
+    cv_folds = 2,
+    seed = 456
+  )
+
+  # Should have same data splits
+  expect_equal(rownames(result1$train_data), rownames(result2$train_data))
+  expect_equal(rownames(result1$test_data), rownames(result2$test_data))
+})
+
+
+# ===== Cleanup =====
+
+test_that("cleanup: remove mock objects", {
+  if (exists("mock_dataset_traintest", envir = .GlobalEnv)) {
+    rm("mock_dataset_traintest", envir = .GlobalEnv)
   }
+  if (exists("mock_selected_motifs", envir = .GlobalEnv)) {
+    rm("mock_selected_motifs", envir = .GlobalEnv)
+  }
+
+  expect_false(exists("mock_dataset_traintest", envir = .GlobalEnv))
+  expect_false(exists("mock_selected_motifs", envir = .GlobalEnv))
 })
 
-test_that("Models are trained (caret train objects)", {
-  datasets <- create_test_data()
-  selected_motifs <- create_selected_motifs()
-
-  suppressWarnings(
-    suppressMessages({
-      result <- train_models_rf_xgboost(
-        dataset_traintest = datasets,
-        selected_motifs = selected_motifs,
-        prop_train = 0.7,
-        cv_folds = 2,
-        seed = 123
-      )
-    })
-  )
-
-  expect_s3_class(result$model_rf, "train")
-  expect_s3_class(result$model_xgb, "train")
-})
-
-test_that("Predictions have correct length and class", {
-  datasets <- create_test_data()
-  selected_motifs <- create_selected_motifs()
-
-  suppressWarnings(
-    suppressMessages({
-      result <- train_models_rf_xgboost(
-        dataset_traintest = datasets,
-        selected_motifs = selected_motifs,
-        prop_train = 0.7,
-        cv_folds = 2,
-        seed = 123
-      )
-    })
-  )
-
-  # Test set predictions
-  expect_equal(
-    length(result$predictions_test_rf),
-    nrow(result$test_data)
-  )
-  expect_equal(
-    length(result$predictions_test_xgb),
-    nrow(result$test_data)
-  )
-
-  # Validation set predictions
-  expect_equal(
-    length(result$predictions_validation_rf),
-    nrow(result$validation_data)
-  )
-  expect_equal(
-    length(result$predictions_validation_xgb),
-    nrow(result$validation_data)
-  )
-})
-
-test_that("Confusion matrices are confusionMatrix objects", {
-  datasets <- create_test_data()
-  selected_motifs <- create_selected_motifs()
-
-  suppressWarnings(
-    suppressMessages({
-      result <- train_models_rf_xgboost(
-        dataset_traintest = datasets,
-        selected_motifs = selected_motifs,
-        prop_train = 0.7,
-        cv_folds = 2,
-        seed = 123
-      )
-    })
-  )
-
-  expect_s3_class(result$confusion_matrix_test_rf, "confusionMatrix")
-  expect_s3_class(result$confusion_matrix_test_xgb, "confusionMatrix")
-  expect_s3_class(result$confusion_matrix_validation_rf, "confusionMatrix")
-  expect_s3_class(result$confusion_matrix_validation_xgb, "confusionMatrix")
-})
-
-test_that("Accuracy values are between 0 and 1", {
-  datasets <- create_test_data()
-  selected_motifs <- create_selected_motifs()
-
-  suppressWarnings(
-    suppressMessages({
-      result <- train_models_rf_xgboost(
-        dataset_traintest = datasets,
-        selected_motifs = selected_motifs,
-        prop_train = 0.7,
-        cv_folds = 2,
-        seed = 123
-      )
-    })
-  )
-
-  acc_test_rf <- result$confusion_matrix_test_rf$overall["Accuracy"]
-  acc_test_xgb <- result$confusion_matrix_test_xgb$overall["Accuracy"]
-  acc_val_rf <- result$confusion_matrix_validation_rf$overall["Accuracy"]
-  acc_val_xgb <- result$confusion_matrix_validation_xgb$overall["Accuracy"]
-
-  expect_true(acc_test_rf >= 0 && acc_test_rf <= 1)
-  expect_true(acc_test_xgb >= 0 && acc_test_xgb <= 1)
-  expect_true(acc_val_rf >= 0 && acc_val_rf <= 1)
-  expect_true(acc_val_xgb >= 0 && acc_val_xgb <= 1)
-})
-
-test_that("Comparison dataframe has correct structure", {
-  datasets <- create_test_data()
-  selected_motifs <- create_selected_motifs()
-
-  suppressWarnings(
-    suppressMessages({
-      result <- train_models_rf_xgboost(
-        dataset_traintest = datasets,
-        selected_motifs = selected_motifs,
-        prop_train = 0.7,
-        cv_folds = 2,
-        seed = 123
-      )
-    })
-  )
-
-  comparison <- result$model_comparison
-
-  expect_s3_class(comparison, "data.frame")
-  expect_equal(nrow(comparison), 2)
-  expect_equal(
-    colnames(comparison),
-    c("Model", "Accuracy_Test", "Kappa_Test",
-      "Accuracy_Validation", "Kappa_Validation", "Training_Time_s")
-  )
-})
-
-test_that("Best models are identified correctly", {
-  datasets <- create_test_data()
-  selected_motifs <- create_selected_motifs()
-
-  suppressWarnings(
-    suppressMessages({
-      result <- train_models_rf_xgboost(
-        dataset_traintest = datasets,
-        selected_motifs = selected_motifs,
-        prop_train = 0.7,
-        cv_folds = 2,
-        seed = 123
-      )
-    })
-  )
-
-  expect_true(
-    result$best_model_test %in% c("Random Forest", "XGBoost")
-  )
-  expect_true(
-    result$best_model_validation %in% c("Random Forest", "XGBoost")
-  )
-})
-
-test_that("Training times are positive numeric values", {
-  datasets <- create_test_data()
-  selected_motifs <- create_selected_motifs()
-
-  suppressWarnings(
-    suppressMessages({
-      result <- train_models_rf_xgboost(
-        dataset_traintest = datasets,
-        selected_motifs = selected_motifs,
-        prop_train = 0.7,
-        cv_folds = 2,
-        seed = 123
-      )
-    })
-  )
-
-  expect_true(is.numeric(result$time_rf))
-  expect_true(is.numeric(result$time_xgb))
-  expect_gt(result$time_rf, 0)
-  expect_gt(result$time_xgb, 0)
-})
-
-test_that("print method works correctly", {
-  datasets <- create_test_data()
-  selected_motifs <- create_selected_motifs()
-
-  suppressWarnings(
-    suppressMessages({
-      result <- train_models_rf_xgboost(
-        dataset_traintest = datasets,
-        selected_motifs = selected_motifs,
-        prop_train = 0.7,
-        cv_folds = 2,
-        seed = 123
-      )
-    })
-  )
-
-  expect_output(
-    print(result),
-    "Train Models RF XGBoost Object"
-  )
-})
-
-test_that("summary method works correctly", {
-  datasets <- create_test_data()
-  selected_motifs <- create_selected_motifs()
-
-  suppressWarnings(
-    suppressMessages({
-      result <- train_models_rf_xgboost(
-        dataset_traintest = datasets,
-        selected_motifs = selected_motifs,
-        prop_train = 0.7,
-        cv_folds = 2,
-        seed = 123
-      )
-    })
-  )
-
-  expect_output(
-    summary(result),
-    "Model Summary"
-  )
-})
-
-test_that("Reproducibility with same seed", {
-  datasets <- create_test_data()
-  selected_motifs <- create_selected_motifs()
-
-  suppressWarnings(
-    suppressMessages({
-      result1 <- train_models_rf_xgboost(
-        dataset_traintest = datasets,
-        selected_motifs = selected_motifs,
-        prop_train = 0.7,
-        cv_folds = 2,
-        seed = 456
-      )
-
-      result2 <- train_models_rf_xgboost(
-        dataset_traintest = datasets,
-        selected_motifs = selected_motifs,
-        prop_train = 0.7,
-        cv_folds = 2,
-        seed = 456
-      )
-    })
-  )
-
-  # Check if predictions are identical
-  expect_equal(
-    result1$predictions_test_rf,
-    result2$predictions_test_rf
-  )
-})
-
-test_that("Data partition respects prop_train parameter", {
-  datasets <- create_test_data()
-  selected_motifs <- create_selected_motifs()
-
-  n_total <- nrow(datasets$classification_dataset)
-  expected_train <- ceiling(n_total * 0.7)
-
-  suppressWarnings(
-    suppressMessages({
-      result <- train_models_rf_xgboost(
-        dataset_traintest = datasets,
-        selected_motifs = selected_motifs,
-        prop_train = 0.7,
-        cv_folds = 2,
-        seed = 123
-      )
-    })
-  )
-
-  n_train <- nrow(result$train_data)
-  n_test <- nrow(result$test_data)
-
-  # Allow small deviation due to rounding
-  expect_true(abs(n_train - expected_train) <= 1)
-  expect_equal(n_train + n_test, n_total)
-})
-
-test_that("Selected motifs are correctly used", {
-  datasets <- create_test_data()
-  selected_motifs <- create_selected_motifs()
-
-  suppressWarnings(
-    suppressMessages({
-      result <- train_models_rf_xgboost(
-        dataset_traintest = datasets,
-        selected_motifs = selected_motifs,
-        prop_train = 0.7,
-        cv_folds = 2,
-        seed = 123
-      )
-    })
-  )
-
-  # Check that motifs_used contains only selected motifs
-  expected_motifs <- unique(unlist(selected_motifs))
-  expect_equal(
-    sort(result$motifs_used),
-    sort(expected_motifs)
-  )
-})

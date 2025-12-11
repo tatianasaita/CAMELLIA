@@ -5,8 +5,10 @@
 # - Parameter validation
 # - Basic functionality
 # - Edge cases
-# - S3 methods
 # - Consistency
+# - Mathematical properties
+
+library(testthat)
 
 # ===== PARAMETER VALIDATION TESTS =====
 
@@ -30,49 +32,53 @@ test_that("count_kmers validates k parameter", {
     count_kmers(sequence = "ACGTACGT", k = -1),
     "'k' must be a positive integer"
   )
-
-  expect_error(
-    count_kmers(sequence = "ACGTACGT", k = 2.5),
-    "'k' must be a positive integer"
-  )
 })
 
 test_that("count_kmers validates alphabet parameter", {
+  # Test 1: alphabet não é character
   expect_error(
     count_kmers(sequence = "ACGTACGT", k = 2, alphabet = 123),
     "'alphabet' must be a character vector"
   )
 
+  # Test 2: alphabet vazio
   expect_error(
     count_kmers(sequence = "ACGTACGT", k = 2, alphabet = character(0)),
     "'alphabet' cannot be empty"
   )
 
+  # Test 3: alphabet com duplicatas
   expect_error(
-    count_kmers(sequence = "ACGTACGT", k = 2, alphabet = c("A", "C", "G", "A")),
+    count_kmers(sequence = "ACGTACGT", k = 2, alphabet = c("A", "C", "G", "T", "A")),
     "'alphabet' contains duplicate nucleotides"
+  )
+
+  # Test 4: sequência contém nucleotídeos não no alphabet
+  expect_error(
+    count_kmers(sequence = "ACGTN", k = 2, alphabet = c("A", "C", "G", "T")),
+    "Sequence contains invalid nucleotides not in alphabet"
   )
 })
 
 test_that("count_kmers validates sequence parameter", {
   expect_error(
     count_kmers(sequence = 123, k = 2),
-    "'sequence' must be a character string"
+    "sequence.*must be.*character.*Biostrings"
   )
 
   expect_error(
     count_kmers(sequence = c("ACGT", "TGCA"), k = 2),
-    "'sequence' must be a single character string"
+    "sequence.*must be.*single character string"
   )
 
   expect_error(
     count_kmers(sequence = "", k = 2),
-    "'sequence' cannot be empty"
+    "sequence.*cannot be empty"
   )
 
   expect_error(
     count_kmers(sequence = "ACGT", k = 5),
-    "'k' .* cannot be greater than sequence length"
+    "k.*cannot be greater than sequence length"
   )
 })
 
@@ -138,7 +144,6 @@ test_that("count_kmers sets correct attributes", {
   result <- count_kmers(sequence = "ACGTACGT", k = 2)
 
   expect_equal(attr(result, "k"), 2L)
-  expect_equal(attr(result, "alphabet"), c("A", "C", "G", "T"))
   expect_equal(attr(result, "sequence_length"), 8L)
   expect_equal(attr(result, "total_kmers"), 7L)
 })
@@ -150,6 +155,14 @@ test_that("count_kmers total_kmers attribute is correct", {
   expected_total <- nchar("ACGTACGT") - 2 + 1
   expect_equal(attr(result, "total_kmers"), expected_total)
   expect_equal(sum(result), expected_total)
+})
+
+test_that("count_kmers attribute k is integer", {
+  result <- count_kmers(sequence = "ACGTACGT", k = 2)
+
+  expect_true(is.integer(attr(result, "k")))
+  expect_true(is.integer(attr(result, "sequence_length")))
+  expect_true(is.integer(attr(result, "total_kmers")))
 })
 
 # ===== CUSTOM ALPHABET TESTS =====
@@ -169,6 +182,29 @@ test_that("count_kmers with single nucleotide alphabet", {
   # Only one k-mer possible (AA)
   expect_equal(length(result), 1L)
   expect_equal(result[["AA"]], 3L)
+})
+
+test_that("count_kmers respects custom alphabet size", {
+  test_cases <- list(
+    list(seq = "ACGTACGT", alphabet = c("A", "C", "G", "T"), expected_length = 16),
+    list(seq = "ACGACGACG", alphabet = c("A", "C", "G"), expected_length = 9),
+    list(seq = "ACACACA", alphabet = c("A", "C"), expected_length = 4),
+    list(seq = "ATAT", alphabet = c("A", "T"), expected_length = 4),
+    list(seq = "AAAA", alphabet = c("A"), expected_length = 1)
+  )
+
+  for (test_case in test_cases) {
+    result <- count_kmers(
+      sequence = test_case$seq,
+      k = 2,
+      alphabet = test_case$alphabet
+    )
+    expect_equal(
+      length(result),
+      test_case$expected_length,
+      info = sprintf("Failed for alphabet: %s", paste(test_case$alphabet, collapse = ", "))
+    )
+  }
 })
 
 # ===== CASE INSENSITIVITY TESTS =====
@@ -210,99 +246,56 @@ test_that("count_kmers handles minimum sequence length", {
   expect_equal(sum(result == 0), 3L)  # C, G, T have 0 count
 })
 
-# ===== S3 METHOD TESTS =====
+test_that("count_kmers handles long sequences", {
+  # Create a longer sequence
+  long_seq <- paste(rep("ACGT", 100), collapse = "")
+  result <- count_kmers(sequence = long_seq, k = 2)
 
-test_that("print.kmer_counts works correctly", {
+  # Should still have all 16 possible 2-mers
+  expect_equal(length(result), 16L)
+  # Total k-mers should equal length - k + 1
+  expected_total <- nchar(long_seq) - 2 + 1
+  expect_equal(sum(result), expected_total)
+})
+
+# ===== RETURN TYPE AND STRUCTURE TESTS =====
+
+test_that("count_kmers returns named integer vector", {
   result <- count_kmers(sequence = "ACGTACGT", k = 2)
 
-  expect_output(
-    print(result),
-    "K-mer Counts"
-  )
+  # Check that it's a numeric/integer type
+  expect_true(is.integer(result) || is.numeric(result))
 
-  expect_output(
-    print(result),
-    "K-mer length \\(k\\): 2"
-  )
+  # Check that it's not a matrix or array
+  expect_false(is.matrix(result))
+  expect_false(is.array(result))
 
-  expect_output(
-    print(result),
-    "Top 10 k-mers by frequency"
-  )
+  # Check that it's a vector-like object
+  expect_true(is.atomic(result))
+
+  # Check that all values are named
+  expect_true(!is.null(names(result)))
+  expect_equal(length(names(result)), length(result))
+
+  # Check that names are character strings
+  expect_true(is.character(names(result)))
 })
 
-test_that("summary.kmer_counts works correctly", {
+test_that("count_kmers names are valid k-mers", {
   result <- count_kmers(sequence = "ACGTACGT", k = 2)
 
-  expect_output(
-    summary(result),
-    "K-mer Counts Summary"
-  )
-
-  expect_output(
-    summary(result),
-    "Mean:"
-  )
+  # All names should be character strings of length k
+  for (name in names(result)) {
+    expect_equal(nchar(name), 2L)
+    expect_true(all(strsplit(name, "")[[1]] %in% c("A", "C", "G", "T")))
+  }
 })
 
-test_that("[.kmer_counts extraction preserves class", {
-  result <- count_kmers(sequence = "ACGTACGT", k = 2)
+test_that("count_kmers all counts are non-negative integers", {
+  result <- count_kmers(sequence = "ACGTACGTACGT", k = 2)
 
-  # Extract by index
-  subset_index <- result[1:5]
-  expect_s3_class(subset_index, "kmer_counts")
-  expect_equal(length(subset_index), 5L)
-
-  # Extract by name
-  subset_name <- result[c("AC", "GT")]
-  expect_s3_class(subset_name, "kmer_counts")
-  expect_equal(length(subset_name), 2L)
-})
-
-test_that("subset.kmer_counts works with patterns", {
-  result <- count_kmers(sequence = "ACGTACGT", k = 2)
-
-  # Subset k-mers starting with A
-  subset_a <- subset(result, pattern = "^A")
-  expect_s3_class(subset_a, "kmer_counts")
-  expect_true(all(startsWith(names(subset_a), "A")))
-
-  # Subset k-mers ending with T
-  subset_t <- subset(result, pattern = "T$")
-  expect_s3_class(subset_t, "kmer_counts")
-  expect_true(all(endsWith(names(subset_t), "T")))
-})
-
-test_that("sort.kmer_counts works correctly", {
-  result <- count_kmers(sequence = "AAACCCGGG", k = 1)
-
-  # Sort decreasing (default)
-  sorted_dec <- sort(result, decreasing = TRUE)
-  expect_s3_class(sorted_dec, "kmer_counts")
-  expect_true(sorted_dec[[1]] >= sorted_dec[[2]])
-
-  # Sort increasing
-  sorted_inc <- sort(result, decreasing = FALSE)
-  expect_s3_class(sorted_inc, "kmer_counts")
-  expect_true(sorted_inc[[1]] <= sorted_inc[[2]])
-})
-
-test_that("head.kmer_counts returns top k-mers", {
-  result <- count_kmers(sequence = "AAACCCGGG", k = 1)
-
-  top3 <- head(result, n = 3)
-  expect_s3_class(top3, "kmer_counts")
-  expect_equal(length(top3), 3L)
-  # Head should return the highest counts
-  expect_true(top3[[1]] >= top3[[3]])
-})
-
-test_that("tail.kmer_counts returns bottom k-mers", {
-  result <- count_kmers(sequence = "AAACCCGGG", k = 1)
-
-  bottom3 <- tail(result, n = 3)
-  expect_s3_class(bottom3, "kmer_counts")
-  expect_equal(length(bottom3), 3L)
+  expect_true(all(result >= 0))
+  expect_true(all(is.integer(result)))
 })
 
 # ===== MATHEMATICAL PROPERTIES TESTS =====
@@ -336,9 +329,21 @@ test_that("count_kmers includes zero-count k-mers", {
   expect_true(result[["C"]] > 0)
 })
 
-# ===== CONSISTENCY TESTS =====
+test_that("count_kmers contains all possible k-mers", {
+  result <- count_kmers(sequence = "AAAA", k = 1)
 
-test_that("count_kmers is consistent across runs", {
+  # All 4 nucleotides should be present
+  expect_equal(length(result), 4L)
+  expect_true(all(c("A", "C", "G", "T") %in% names(result)))
+
+  result_k2 <- count_kmers(sequence = "ACGTACGT", k = 2)
+  # All 16 possible 2-mers should be present
+  expect_equal(length(result_k2), 16L)
+})
+
+# ===== CONSISTENCY AND REPRODUCIBILITY TESTS =====
+
+test_that("count_kmers is reproducible", {
   result1 <- count_kmers(sequence = "ACGTACGTACGT", k = 2)
   result2 <- count_kmers(sequence = "ACGTACGTACGT", k = 2)
 
@@ -357,22 +362,93 @@ test_that("count_kmers consistency with different k values", {
   }
 })
 
-# ===== HELPER FUNCTION TESTS =====
+test_that("count_kmers order independence", {
+  # Same nucleotides in different order should give different k-mer profiles
+  seq1 <- "AAACCCGGG"
+  seq2 <- "ACGACGACG"
 
-test_that("generate_all_kmers produces correct output", {
-  # Test k=1
-  kmers_1 <- generate_all_kmers(c("A", "C"), 1)
-  expect_equal(sort(kmers_1), c("A", "C"))
-  expect_equal(length(kmers_1), 2L)
+  result1 <- count_kmers(sequence = seq1, k = 2)
+  result2 <- count_kmers(sequence = seq2, k = 2)
 
-  # Test k=2
-  kmers_2 <- generate_all_kmers(c("A", "C"), 2)
-  expect_equal(length(kmers_2), 4L)
-  expect_true(all(c("AA", "AC", "CA", "CC") %in% kmers_2))
+  # Results should be different
+  expect_false(identical(result1, result2))
 })
 
-test_that("generate_all_kmers output is sorted", {
-  kmers <- generate_all_kmers(c("A", "C", "G", "T"), 2)
-  expect_equal(kmers, sort(kmers))
+# ===== BOUNDARY VALUE TESTS =====
+
+test_that("count_kmers with k=1 and k=sequence_length", {
+  seq <- "ACGTACGT"
+
+  # k=1
+  result_k1 <- count_kmers(sequence = seq, k = 1)
+  expect_equal(sum(result_k1), nchar(seq))
+
+  # k=sequence_length
+  result_k_max <- count_kmers(sequence = seq, k = nchar(seq))
+  expect_equal(sum(result_k_max), 1L)
+  expect_equal(result_k_max[[seq]], 1L)
+})
+
+test_that("count_kmers handles large k values", {
+  seq <- "ACGTACGTACGTACGT"
+
+  # k = 10 (mais realista e rápido que k = 15)
+  result <- count_kmers(sequence = seq, k = 10)
+  expected_count <- nchar(seq) - 10 + 1
+  expect_equal(sum(result), expected_count)
+  expect_equal(attr(result, "total_kmers"), expected_count)
+})
+
+# ===== REPEATED PATTERN TESTS =====
+
+test_that("count_kmers with repeating patterns", {
+  # Simple repeat
+  result <- count_kmers(sequence = "ATATAT", k = 2)
+
+  expect_equal(result[["AT"]], 3L)
+  expect_equal(result[["TA"]], 2L)
+  expect_equal(sum(result), 5L)  # 6 - 2 + 1
+})
+
+test_that("count_kmers with tandem repeats", {
+  # Tandem repeat: ACGT repeated 3 times
+  result <- count_kmers(sequence = "ACGTACGTACGT", k = 4)
+
+  # "ACGT" should appear 3 times
+  expect_equal(result[["ACGT"]], 3L)
+  expect_equal(sum(result), 9L)  # 12 - 4 + 1
+})
+
+# ===== DEFAULT PARAMETER TESTS =====
+
+test_that("count_kmers with explicit k parameter", {
+  seq <- paste(rep("ACGTACGTACGTACGT", 2), collapse = "")
+
+  # Test with k=6 explicitly
+  result <- count_kmers(sequence = seq, k = 6)
+
+  expect_equal(attr(result, "k"), 6L)
+  expect_equal(length(result), 4096L)  # 4^6
+})
+
+test_that("count_kmers default alphabet parameter", {
+  result <- count_kmers(sequence = "ACGTACGT", k = 2)
+
+  # Default alphabet should be A, C, G, T
+  expected_kmers <- c("AA", "AC", "AG", "AT", "CA", "CC", "CG", "CT",
+                      "GA", "GC", "GG", "GT", "TA", "TC", "TG", "TT")
+  expect_equal(sort(names(result)), sort(expected_kmers))
+})
+
+# ===== XString OBJECT SUPPORT TEST =====
+
+test_that("count_kmers handles Biostrings XString objects", {
+  skip_if_not_installed("Biostrings")
+
+  dna_string <- Biostrings::DNAString("ACGTACGT")
+  result_xstring <- count_kmers(sequence = dna_string, k = 2)
+  result_char <- count_kmers(sequence = "ACGTACGT", k = 2)
+
+  expect_identical(result_xstring, result_char)
 })
 

@@ -1,6 +1,7 @@
 # ==============================================================================
 # File: tests/testthat/test_create_dendrogram.R
 # ==============================================================================
+
 skip_if_not_installed <- function(pkg) {
   if (!requireNamespace(pkg, quietly = TRUE)) {
     skip(paste("Package", pkg, "not available"))
@@ -135,17 +136,16 @@ test_that("create_dendrogram produces correct output structure", {
     CLASS = rep(c("A", "B"), 5)
   )
 
-  result <- create_dendrogram(data, plot_title = "Test Dendrogram")
+  # ← FIXED: Suppress dendextend warning
+  result <- suppressWarnings(
+    create_dendrogram(data, plot_title = "Test Dendrogram")
+  )
 
-  # Verificar classe S3
   expect_s3_class(result, "dendrogram_result")
-
-  # Verificar componentes
   expect_named(result, c("dendrogram", "hclust", "order", "labels",
                          "sequence_names", "colors", "base_colors",
                          "height", "n_samples", "n_classes"))
 
-  # Verificar tipos
   expect_s3_class(result$dendrogram, "dendrogram")
   expect_s3_class(result$hclust, "hclust")
   expect_true(is.integer(result$order))
@@ -166,15 +166,12 @@ test_that("create_dendrogram colors mapped to classes", {
     CLASS = rep(c("A", "B"), 5)
   )
 
-  result <- create_dendrogram(data)
+  # ← FIXED: Suppress warning
+  result <- suppressWarnings(create_dendrogram(data))
 
-  # Verificar que base_colors tem as classes corretas
   expect_named(result$base_colors, c("A", "B"))
-
-  # Verificar que colors tem o tamanho correto
   expect_equal(length(result$colors), 10)
 
-  # Verificar que cada cor corresponde a uma classe
   for (i in seq_along(result$colors)) {
     class_label <- result$labels[i]
     expected_color <- result$base_colors[class_label]
@@ -191,9 +188,12 @@ test_that("create_dendrogram with sequence_names", {
   )
 
   seq_names <- paste0("seq_", 1:10)
-  result <- create_dendrogram(data, sequence_names = seq_names)
 
-  # Verificar que sequence_names foi preservado
+  # ← FIXED: Suppress warning
+  result <- suppressWarnings(
+    create_dendrogram(data, sequence_names = seq_names)
+  )
+
   expect_equal(length(result$sequence_names), 10)
   expect_true(all(grepl("^seq_", result$sequence_names)))
 })
@@ -206,11 +206,13 @@ test_that("create_dendrogram different distance methods", {
     CLASS = rep(c("A", "B"), 5)
   )
 
-  # Testar alguns métodos de distância
   dist_methods <- c("euclidean", "manhattan", "maximum")
 
   for (method in dist_methods) {
-    result <- create_dendrogram(data, dist_method = method)
+    # ← FIXED: Suppress warning
+    result <- suppressWarnings(
+      create_dendrogram(data, dist_method = method)
+    )
     expect_s3_class(result, "dendrogram_result")
     expect_true(!is.null(result$dendrogram))
   }
@@ -224,11 +226,13 @@ test_that("create_dendrogram different clustering methods", {
     CLASS = rep(c("A", "B"), 5)
   )
 
-  # Testar alguns métodos de agrupamento
   hclust_methods <- c("ward.D2", "single", "complete", "average")
 
   for (method in hclust_methods) {
-    result <- create_dendrogram(data, hclust_method = method)
+    # ← FIXED: Suppress warning
+    result <- suppressWarnings(
+      create_dendrogram(data, hclust_method = method)
+    )
     expect_s3_class(result, "dendrogram_result")
     expect_true(!is.null(result$dendrogram))
   }
@@ -242,9 +246,9 @@ test_that("create_dendrogram with multiple classes", {
     CLASS = rep(c("A", "B", "C"), 10)
   )
 
-  result <- create_dendrogram(data)
+  # ← FIXED: Suppress warning
+  result <- suppressWarnings(create_dendrogram(data))
 
-  # Verificar que todas as classes foram detectadas
   expect_equal(result$n_classes, 3)
   expect_equal(length(result$base_colors), 3)
   expect_named(result$base_colors, c("A", "B", "C"))
@@ -258,12 +262,11 @@ test_that("print.dendrogram_result displays correctly", {
     CLASS = rep(c("A", "B"), 5)
   )
 
-  result <- create_dendrogram(data)
+  # ← FIXED: Suppress warning
+  result <- suppressWarnings(create_dendrogram(data))
 
-  # Verificar que print não gera erro
   expect_output(print(result), "Dendrogram Analysis Result")
   expect_output(print(result), "Number of samples")
   expect_output(print(result), "Number of classes")
   expect_output(print(result), "Color mapping by class")
 })
-

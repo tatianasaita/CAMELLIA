@@ -1,312 +1,385 @@
-#' Select Training and Validation Samples from Cluster Analysis
+#' Select Sample for Training and Validation Datasets
 #'
-#' Selects sequences for classification and validation datasets,
-#' ensuring stratification by class.
+#' @param cluster_result List from cluster_dendrogram() containing data_result.
+#' @param k_per_class Integer. Number of sequences per class for training.
+#' @param min_size Integer. Minimum sequence length for training (not applied to validation).
+#' @param external_validation_fasta_dir Character or NULL. Path to external FASTA files.
+#' @param k_for_external_validation Integer. K-mer size for external validation. Default 6.
 #'
-#' @param cluster_result List containing data_result from cluster_dendrogram().
-#'   Must include metadata (with sequence information) and kmers (k-mer data).
-#' @param k_per_class Integer. Number of sequences to select per class for classification dataset.
-#' @param min_size Integer. Minimum sequence length to consider.
-#'
-#' @return A list with four elements:
-#'   \describe{
-#'     \item{true_labels_classification}{Metadata for classification sequences}
-#'     \item{true_labels_validation}{Metadata for validation sequences}
-#'     \item{classification_dataset}{K-mer values for classification sequences}
-#'     \item{validation_dataset}{K-mer values for validation sequences}
-#'   }
-#'
-#' @details
-#' The function performs the following steps:
-#' \enumerate{
-#'   \item Filters sequences by minimum length
-#'   \item Selects k_per_class sequences per class for classification dataset
-#'   \item Remaining sequences go to validation dataset
-#'   \item Ensures no overlap between datasets
-#'   \item Matches sequences with k-mer data using rownames
-#'   \item Saves all results to RData files and creates backup
-#' }
-#'
-#' @examples
-#' \dontrun{
-#' datasets <- select_sample_train_validation(
-#'   cluster_result = cluster_result,
-#'   k_per_class = 50,
-#'   min_size = 300
-#' )
-#'
-#' classification_data <- datasets$classification_dataset
-#' validation_data <- datasets$validation_dataset
-#' classification_labels <- datasets$true_labels_classification
-#' validation_labels <- datasets$true_labels_validation
-#' }
+#' @return A list of class "sample_selection" with training and validation datasets.
 #'
 #' @export
 select_sample_train_validation <- function(cluster_result,
                                            k_per_class,
-                                           min_size) {
+                                           min_size = 800,
+                                           external_validation_fasta_dir = NULL,
+                                           k_for_external_validation = 6L) {
 
-  # === INPUT VALIDATION ===
+  # ===== VALIDATION =====
 
-  if (!is.list(cluster_result)) {
-    stop("'cluster_result' must be a list from cluster_dendrogram()")
-  }
-
-  if (!("data_result" %in% names(cluster_result))) {
-    stop("'cluster_result' must contain 'data_result'")
+  # Validate cluster_result structure
+  if (!is.list(cluster_result) || !("data_result" %in% names(cluster_result))) {
+    stop("'cluster_result' must be a list from cluster_dendrogram() with 'data_result'", call. = FALSE)
   }
 
   data_result <- cluster_result$data_result
 
-  if (!("metadata" %in% names(data_result))) {
-    stop("'data_result' must contain 'metadata'")
+  if (!is.list(data_result)) {
+    stop("'data_result' must be a list", call. = FALSE)
   }
 
-  if (!("kmers" %in% names(data_result))) {
-    stop("'data_result' must contain 'kmers'")
+  if (!all(c("metadata", "kmers") %in% names(data_result))) {
+    stop("'data_result' must contain 'metadata' and 'kmers'", call. = FALSE)
   }
 
   metadata <- data_result$metadata
   kmers <- data_result$kmers
 
-  if (!is.data.frame(metadata)) {
-    stop("'metadata' must be a data.frame")
+  if (is.null(metadata) || !is.data.frame(metadata)) {
+    stop("'metadata' must be a data.frame", call. = FALSE)
   }
 
-  if (!is.data.frame(kmers)) {
-    stop("'kmers' must be a data.frame")
+  if (is.null(kmers) || !is.data.frame(kmers)) {
+    stop("'kmers' must be a data.frame", call. = FALSE)
   }
 
-  if (!is.numeric(k_per_class) || k_per_class <= 0 || k_per_class != as.integer(k_per_class)) {
-    stop("'k_per_class' must be a positive integer")
+  if (nrow(metadata) == 0) {
+    stop("'metadata' is empty", call. = FALSE)
   }
 
-  if (!is.numeric(min_size) || min_size <= 0 || min_size != as.integer(min_size)) {
-    stop("'min_size' must be a positive integer")
+  if (nrow(kmers) == 0) {
+    stop("'kmers' is empty", call. = FALSE)
   }
 
-  # Check if required columns exist
-  required_cols_metadata <- c("sequence_name", "length", "class")
-  missing_cols <- setdiff(required_cols_metadata, colnames(metadata))
-  if (length(missing_cols) > 0) {
-    stop(paste("Missing columns in metadata:", paste(missing_cols, collapse = ", ")))
+  if (nrow(metadata) != nrow(kmers)) {
+    stop("'metadata' and 'kmers' must have the same number of rows", call. = FALSE)
   }
 
-  # === AUXILIARY FUNCTIONS ===
+  required_cols <- c("sequence_name", "length", "class")
+  if (!all(required_cols %in% colnames(metadata))) {
+    stop("'metadata' missing required columns: ",
+         paste(setdiff(required_cols, colnames(metadata)), collapse = ", "), call. = FALSE)
+  }
 
-  # Function to verify sequence availability
-  verify_availability <- function(data, size = NULL, title = "") {
-    if (!is.null(size)) {
-      data_filtered <- data[data$length >= size, ]
-      cat(title, "Sequence availability by class (length >=", size, "):\n")
-    } else {
-      data_filtered <- data
-      cat(title, "Sequence availability by class (any length):\n")
+  # Validate k_per_class
+  if (!is.numeric(k_per_class)) {
+    stop("'k_per_class' must be numeric", call. = FALSE)
+  }
+  if (length(k_per_class) != 1L) {
+    stop("'k_per_class' must be a single value", call. = FALSE)
+  }
+  if (is.na(k_per_class)) {
+    stop("'k_per_class' cannot be NA", call. = FALSE)
+  }
+  if (k_per_class <= 0) {
+    stop("'k_per_class' must be positive", call. = FALSE)
+  }
+  if ((k_per_class %% 1) != 0) {
+    stop("'k_per_class' must be an integer", call. = FALSE)
+  }
+
+  # Validate min_size
+  if (!is.numeric(min_size)) {
+    stop("'min_size' must be numeric", call. = FALSE)
+  }
+  if (length(min_size) != 1L) {
+    stop("'min_size' must be a single value", call. = FALSE)
+  }
+  if (is.na(min_size)) {
+    stop("'min_size' cannot be NA", call. = FALSE)
+  }
+  if (min_size <= 0) {
+    stop("'min_size' must be positive", call. = FALSE)
+  }
+  if ((min_size %% 1) != 0) {
+    stop("'min_size' must be an integer", call. = FALSE)
+  }
+
+  # Validate external validation parameters
+  if (!is.null(external_validation_fasta_dir)) {
+    if (!is.character(external_validation_fasta_dir)) {
+      stop("'external_validation_fasta_dir' must be a character string or NULL", call. = FALSE)
     }
 
-    # Count by class
-    availability <- table(data_filtered$class)
-    print(availability)
-    cat("\n")
-
-    return(list(
-      data_filtered = data_filtered,
-      availability = availability
-    ))
-  }
-
-  # Function to select sequences by class
-  select_by_class <- function(data, k, dataset_name = "", sequences_exclude = NULL) {
-    # Exclude already selected sequences, if any
-    if (!is.null(sequences_exclude)) {
-      data <- data[!(data$sequence_name %in% sequences_exclude), ]
-    }
-
-    # Group by class
-    data_by_class <- split(data, data$class)
-
-    # Select k sequences from each class
-    sequences_selected <- lapply(data_by_class, function(class_data) {
-      n_available <- nrow(class_data)
-      k_adjusted <- min(k, n_available)
-
-      if (k_adjusted > 0) {
-        if (k_adjusted < k) {
-          warning(paste(dataset_name, "- Class", unique(class_data$class),
-                        "has only", n_available, "sequences available.",
-                        "Selecting", k_adjusted, "sequences."))
-        }
-
-        # Select random sample
-        selected_indices <- sample(nrow(class_data), k_adjusted)
-        return(class_data[selected_indices, ])
-      } else {
-        warning(paste(dataset_name, "- Class", unique(class_data$class),
-                      "has no sequences available."))
-        return(NULL)
+    invalid_dirs <- character(0)
+    for (dir_path in external_validation_fasta_dir) {
+      if (!dir.exists(dir_path)) {
+        invalid_dirs <- c(invalid_dirs, dir_path)
       }
+    }
+
+    if (length(invalid_dirs) > 0) {
+      stop("External validation directory does not exist: ",
+           paste(invalid_dirs, collapse = ", "), call. = FALSE)
+    }
+
+    if (!is.numeric(k_for_external_validation)) {
+      stop("'k_for_external_validation' must be numeric", call. = FALSE)
+    }
+    if (length(k_for_external_validation) != 1L) {
+      stop("'k_for_external_validation' must be a single value", call. = FALSE)
+    }
+    if (is.na(k_for_external_validation)) {
+      stop("'k_for_external_validation' cannot be NA", call. = FALSE)
+    }
+    if (k_for_external_validation <= 0) {
+      stop("'k_for_external_validation' must be positive", call. = FALSE)
+    }
+    if ((k_for_external_validation %% 1) != 0) {
+      stop("'k_for_external_validation' must be an integer", call. = FALSE)
+    }
+  }
+
+  # ===== CLASSIFICATION DATASET =====
+
+  cat("\n=== CLASSIFICATION DATASET ===\n")
+
+  # Filter by min_size
+  metadata_filtered <- metadata[metadata$length >= min_size, ]
+
+  if (nrow(metadata_filtered) == 0) {
+    stop("No sequences available with length >= ", min_size, call. = FALSE)
+  }
+
+  cat("Sequences with length >=", min_size, ":", nrow(metadata_filtered), "\n")
+  cat("Available classes:", paste(unique(metadata_filtered$class), collapse = ", "), "\n")
+
+  # Select sequences per class
+  classification_metadata <- .select_by_class(metadata_filtered, k_per_class, "classification")
+
+  if (nrow(classification_metadata) == 0) {
+    stop("Could not select any sequences for classification", call. = FALSE)
+  }
+
+  # Extract k-mers using sequence names
+  selected_indices <- match(classification_metadata$sequence_name, metadata$sequence_name)
+  classification_dataset <- kmers[selected_indices, , drop = FALSE]
+  rownames(classification_dataset) <- classification_metadata$sequence_name
+
+  cat("Total classification sequences:", nrow(classification_metadata), "\n\n")
+
+  # ===== VALIDATION DATASET =====
+
+  if (is.null(external_validation_fasta_dir)) {
+    # Internal validation
+    cat("=== INTERNAL VALIDATION DATASET ===\n")
+
+    # Get sequences NOT selected for classification
+    remaining_metadata <- metadata[!(metadata$sequence_name %in% classification_metadata$sequence_name), ]
+
+    if (nrow(remaining_metadata) == 0) {
+      warning("No sequences available for internal validation", call. = FALSE)
+      validation_metadata <- data.frame(
+        sequence_name = character(0),
+        length = integer(0),
+        class = character(0),
+        stringsAsFactors = FALSE
+      )
+      validation_dataset <- kmers[0, , drop = FALSE]
+    } else {
+      validation_metadata <- remaining_metadata
+
+      cat("Validation sequences:", nrow(validation_metadata), "\n")
+      cat("Validation classes:", paste(unique(validation_metadata$class), collapse = ", "), "\n\n")
+
+      # Extract k-mers
+      validation_indices <- match(validation_metadata$sequence_name, metadata$sequence_name)
+      validation_dataset <- kmers[validation_indices, , drop = FALSE]
+      rownames(validation_dataset) <- validation_metadata$sequence_name
+
+      # Verify no overlap
+      overlap <- intersect(classification_metadata$sequence_name, validation_metadata$sequence_name)
+      if (length(overlap) > 0) {
+        warning("Using ", length(overlap), " sequences from classification set (WARNING: Data leakage!)",
+                call. = FALSE)
+      }
+    }
+
+  } else {
+    # External validation
+    cat("=== EXTERNAL VALIDATION DATASET ===\n")
+
+    # Use first directory if multiple provided
+    validation_dir <- external_validation_fasta_dir[1]
+
+    external_data_result <- tryCatch({
+      create_data(input = validation_dir, k = k_for_external_validation)
+    }, error = function(e) {
+      stop("Error creating external validation dataset: ", e$message, call. = FALSE)
     })
 
-    # Combine results, removing NULLs
-    sequences_selected <- do.call(rbind, sequences_selected[!sapply(sequences_selected, is.null)])
-    rownames(sequences_selected) <- NULL
+    validation_metadata <- external_data_result$metadata
+    validation_dataset <- external_data_result$kmers
 
-    return(sequences_selected)
+    if (nrow(validation_metadata) == 0) {
+      stop("No validation sequences with length >= ", min_size, call. = FALSE)
+    }
+
+    cat("Available sequences by class:\n")
+    print(table(validation_metadata$class))
+    cat("Selected:", nrow(validation_metadata), "sequences\n\n")
+
+    # Check k-mer compatibility
+    n_kmers_class <- ncol(classification_dataset)
+    n_kmers_val <- ncol(validation_dataset)
+
+    if (n_kmers_class != n_kmers_val) {
+      warning("K-mer count mismatch: classification=", n_kmers_class,
+              ", validation=", n_kmers_val, call. = FALSE)
+
+      # Align columns
+      common_kmers <- intersect(colnames(classification_dataset), colnames(validation_dataset))
+
+      if (length(common_kmers) < n_kmers_class * 0.9) {
+        warning("Only ", length(common_kmers), " common k-mers found (",
+                round(length(common_kmers) / n_kmers_class * 100, 1), "%)",
+                call. = FALSE)
+      }
+
+      validation_dataset <- validation_dataset[, common_kmers, drop = FALSE]
+      classification_dataset <- classification_dataset[, common_kmers, drop = FALSE]
+    }
   }
 
-  # === SELECTION OF CLASSIFICATION DATASET ===
+  # ===== SAVE RESULTS =====
 
-  cat("=== CLASSIFICATION DATASET SELECTION ===\n\n")
-  verification_classification <- verify_availability(metadata, min_size)
-  data_filtered_classification <- verification_classification$data_filtered
+  cat("=== SAVING RESULTS ===\n")
 
-  # Select sequences for classification_dataset
-  true_labels_classification <- select_by_class(
-    data_filtered_classification,
-    k_per_class,
-    "Classification"
+  # Save with the expected variable names
+  true_labels_classification <- classification_metadata
+  save(true_labels_classification, file = "true_labels_classification.RData")
+
+  save(classification_dataset, file = "classification_dataset.RData")
+
+  if (nrow(validation_metadata) > 0) {
+    true_labels_validation <- validation_metadata
+    save(true_labels_validation, file = "true_labels_validation.RData")
+    save(validation_dataset, file = "validation_dataset.RData")
+  }
+
+  # Create backup with all data
+  backup_data <- list(
+    true_labels_classification = classification_metadata,
+    classification_dataset = classification_dataset,
+    true_labels_validation = validation_metadata,
+    validation_dataset = validation_dataset
+  )
+  save(backup_data, file = "backup_checkpoint1.RData")
+
+  cat("Files saved successfully\n\n")
+
+  # ===== RETURN =====
+
+  result <- list(
+    classification_dataset = classification_dataset,
+    validation_dataset = validation_dataset,
+    classification_metadata = classification_metadata,
+    validation_metadata = validation_metadata,
+    # Aliases for backward compatibility
+    true_labels_classification = classification_metadata,
+    true_labels_validation = validation_metadata
   )
 
-  # Check if sequences were selected
-  if (is.null(true_labels_classification) || nrow(true_labels_classification) == 0) {
-    stop("Could not select any sequences for classification_dataset with the specified criteria.")
-  }
+  # Set attributes
+  attr(result, "n_classification") <- nrow(classification_metadata)
+  attr(result, "n_validation") <- nrow(validation_metadata)
+  attr(result, "validation_type") <- if (is.null(external_validation_fasta_dir)) "internal" else "external"
+  attr(result, "min_size") <- min_size
+  attr(result, "k_per_class") <- k_per_class
 
-  # Extract names of selected sequences for classification
-  names_classification <- true_labels_classification$sequence_name
+  # Set class
+  class(result) <- c("sample_selection", "list")
 
-  # Select in kmers using rownames
-  classification_dataset <- kmers[rownames(kmers) %in% names_classification, ]
+  return(result)
+}
 
-  cat("CLASSIFICATION DATASET selected:\n")
-  cat("Total sequences selected:", nrow(true_labels_classification), "\n")
-  cat("Total sequences found in kmers:", nrow(classification_dataset), "\n\n")
 
-  # === SELECTION OF VALIDATION DATASET ===
+# ===== INTERNAL FUNCTIONS =====
 
-  cat("=== VALIDATION DATASET SELECTION ===\n\n")
+#' Select k sequences per class
+#' @keywords internal
+.select_by_class <- function(data, k, dataset_name = "") {
+  classes <- unique(data$class)
 
-  # Select all sequences not in classification set
-  true_labels_validation <- metadata[!(metadata$sequence_name %in% names_classification), ]
+  sequences_selected <- lapply(classes, function(cls) {
+    class_data <- data[data$class == cls, ]
+    n_available <- nrow(class_data)
+    k_adjusted <- min(k, n_available)
 
-  # Check if sequences are available for validation
-  if (nrow(true_labels_validation) == 0) {
-    warning("No sequences available for validation set after removing classification sequences.")
-    true_labels_validation <- NULL
-  } else {
-    # Print information about validation set
-    cat("Validation - Sequence availability by class:\n")
-    print(table(true_labels_validation$class))
-    cat("\n")
-  }
-
-  # Extract names of selected sequences for validation
-  names_validation <- if (!is.null(true_labels_validation)) {
-    true_labels_validation$sequence_name
-  } else {
-    character(0)
-  }
-
-  # Select in kmers using rownames
-  validation_dataset <- kmers[rownames(kmers) %in% names_validation, ]
-
-  # Check how many sequences were found in the feature dataset
-  if (length(names_validation) > 0) {
-    sequences_found <- sum(names_validation %in% rownames(kmers))
-    cat("Validation - Total sequences found in kmers:", sequences_found, "\n\n")
-
-    if (sequences_found < length(names_validation)) {
-      warning(paste("Only", sequences_found, "of", length(names_validation),
-                    "validation sequences were found in the feature dataset."))
+    if (k_adjusted == 0) {
+      return(NULL)
     }
-  } else {
-    cat("Validation - No sequences available\n\n")
-  }
 
-  # === FINAL SUMMARY ===
+    cat("   ", cls, ":", k_adjusted, "selected for", dataset_name, ",",
+        n_available - k_adjusted, "remaining\n")
 
-  cat("=== SELECTION SUMMARY ===\n\n")
+    set.seed(123)  # For reproducibility in tests
+    selected_indices <- sample(nrow(class_data), k_adjusted)
+    class_data[selected_indices, ]
+  })
 
-  cat("CLASSIFICATION DATASET:\n")
-  cat("Total sequences selected:", nrow(true_labels_classification), "\n")
-  cat("Distribution by class:\n")
-  print(table(true_labels_classification$class))
-  cat("Sequences found in kmers:", nrow(classification_dataset), "\n")
-  cat("Percentage found:", round(100 * nrow(classification_dataset) / nrow(true_labels_classification), 2), "%\n\n")
+  sequences_selected <- do.call(rbind, sequences_selected[!sapply(sequences_selected, is.null)])
+  rownames(sequences_selected) <- NULL
 
-  cat("VALIDATION DATASET:\n")
-  if (!is.null(true_labels_validation) && nrow(true_labels_validation) > 0) {
-    cat("Total sequences selected:", nrow(true_labels_validation), "\n")
-    cat("Distribution by class:\n")
-    print(table(true_labels_validation$class))
-    cat("Sequences found in kmers:", nrow(validation_dataset), "\n")
-    cat("Percentage found:", round(100 * nrow(validation_dataset) / nrow(true_labels_validation), 2), "%\n\n")
-  } else {
-    cat("No sequences available\n\n")
-  }
+  sequences_selected
+}
 
-  # === OVERLAP CHECK ===
 
-  overlap <- intersect(names_classification, names_validation)
-  if (length(overlap) > 0) {
-    warning(paste("There are", length(overlap), "overlapping sequences between datasets!"))
-  } else {
-    cat("No overlap between datasets.\n\n")
-  }
+# ===== S3 METHODS =====
 
-  # === MISSING SEQUENCES CHECK ===
+#' @export
+print.sample_selection <- function(x, ...) {
+  cat("\n=== Sample Selection Summary ===\n\n")
+  cat("Classification sequences:", attr(x, "n_classification"), "\n")
+  cat("Validation sequences:    ", attr(x, "n_validation"), "\n")
+  cat("Validation type:         ", attr(x, "validation_type"), "\n")
+  cat("Min sequence size:       ", attr(x, "min_size"), "\n")
+  cat("Sequences per class:     ", attr(x, "k_per_class"), "\n\n")
 
-  names_classification_not_found <- setdiff(names_classification, rownames(kmers))
-  names_validation_not_found <- setdiff(names_validation, rownames(kmers))
+  cat("Class distribution (classification):\n")
+  print(table(x$classification_metadata$class))
 
-  if (length(names_classification_not_found) > 0) {
-    warning(paste("Classification sequences not found in kmers:", length(names_classification_not_found)))
-  } else {
-    cat("All classification sequences were found in kmers.\n")
-  }
-
-  if (length(names_validation_not_found) > 0) {
-    warning(paste("Validation sequences not found in kmers:", length(names_validation_not_found)))
-  } else if (length(names_validation) > 0) {
-    cat("All validation sequences were found in kmers.\n")
+  if (attr(x, "n_validation") > 0) {
+    cat("\nClass distribution (validation):\n")
+    print(table(x$validation_metadata$class))
   }
 
   cat("\n")
+  invisible(x)
+}
 
-  # === SAVE RESULTS ===
 
-  cat("=== SAVING RESULTS ===\n\n")
+#' @export
+summary.sample_selection <- function(object, ...) {
+  cat("\n=== Detailed Sample Selection Summary ===\n\n")
 
-  save(true_labels_classification, file = "true_labels_classification.RData")
-  save(true_labels_validation, file = "true_labels_validation.RData")
-  save(classification_dataset, file = "classification_dataset.RData")
-  save(validation_dataset, file = "validation_dataset.RData")
+  cat("Classification Dataset:\n")
+  cat("  Sequences:", attr(object, "n_classification"), "\n")
+  cat("  Features:", ncol(object$classification_dataset), "\n")
+  cat("  Classes:\n")
+  print(table(object$classification_metadata$class))
+  cat("\n")
 
-  # Save checkpoint
-  save.image("backup_checkpoint1.RData")
+  if (attr(object, "n_validation") > 0) {
+    cat("Validation Dataset (", attr(object, "validation_type"), "):\n", sep = "")
+    cat("  Sequences:", attr(object, "n_validation"), "\n")
+    cat("  Features:", ncol(object$validation_dataset), "\n")
+    cat("  Classes:\n")
+    print(table(object$validation_metadata$class))
+    cat("\n")
+  } else {
+    cat("Validation Dataset: None\n\n")
+  }
 
-  cat("Files saved successfully:\n")
-  cat("  * true_labels_classification.RData\n")
-  cat("  * true_labels_validation.RData\n")
-  cat("  * classification_dataset.RData\n")
-  cat("  * validation_dataset.RData\n")
-  cat("  * backup_checkpoint1.RData\n\n")
+  cat("Sequence Length Statistics:\n")
+  cat("  Classification:\n")
+  print(summary(object$classification_metadata$length))
 
-  # === FINAL STATISTICS ===
+  if (attr(object, "n_validation") > 0) {
+    cat("  Validation:\n")
+    print(summary(object$validation_metadata$length))
+  }
 
-  cat("=== FINAL STATISTICS ===\n\n")
-  cat("Total sequences in metadata:", nrow(metadata), "\n")
-  cat("Total sequences in kmers:", nrow(kmers), "\n")
-  cat("Sequences selected for classification:", nrow(true_labels_classification), "\n")
-  cat("Sequences selected for validation:", if (!is.null(true_labels_validation)) nrow(true_labels_validation) else 0, "\n")
-  cat("Total sequences used:", nrow(true_labels_classification) + if (!is.null(true_labels_validation)) nrow(true_labels_validation) else 0, "\n")
-  cat("Sequences not used:", nrow(metadata) - (nrow(true_labels_classification) + if (!is.null(true_labels_validation)) nrow(true_labels_validation) else 0), "\n\n")
-
-  # Return objects for immediate use
-  return(list(
-    true_labels_classification = true_labels_classification,
-    true_labels_validation = true_labels_validation,
-    classification_dataset = classification_dataset,
-    validation_dataset = validation_dataset
-  ))
+  cat("\n")
+  invisible(object)
 }

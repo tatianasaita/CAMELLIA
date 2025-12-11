@@ -5,9 +5,7 @@
 #' @param alphabet Character vector. Default: c("A", "C", "G", "T")
 #'
 #' @importFrom Biostrings mkAllStrings
-#' @importFrom stats median predict setNames
-#' @importFrom utils capture.output head tail
-#' @importFrom methods is
+#' @importFrom utils head tail
 #'
 #' @export
 count_kmers <- function(sequence,
@@ -132,10 +130,10 @@ count_kmers <- function(sequence,
   class(complete_counts) <- c("kmer_counts", "integer")
 
   # Add attributes for metadata
-  attr(complete_counts, "k") <- k
+  attr(complete_counts, "k") <- as.integer(k)
   attr(complete_counts, "alphabet") <- alphabet
-  attr(complete_counts, "sequence_length") <- seq_length
-  attr(complete_counts, "total_kmers") <- sum(complete_counts)
+  attr(complete_counts, "sequence_length") <- as.integer(seq_length)
+  attr(complete_counts, "total_kmers") <- as.integer(sum(complete_counts))
 
   return(complete_counts)
 }

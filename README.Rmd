@@ -18,6 +18,7 @@ knitr::opts_chunk$set(
 <!-- badges: start -->
 [![CRAN status](https://www.r-pkg.org/badges/version/CAMELLIA)](https://CRAN.R-project.org/package=CAMELLIA)
 [![R-CMD-check](https://github.com/tatianasaita/CAMELLIA/workflows/R-CMD-check/badge.svg)](https://github.com/tatianasaita/CAMELLIA/actions)
+[![R-CMD-check](https://github.com/tatianasaita/CAMELLIA/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/tatianasaita/CAMELLIA/actions/workflows/R-CMD-check.yaml)
 <!-- badges: end -->
 
 CAMELLIA provides a comprehensive pipeline for k-mer-based sequence analysis, clustering, motif discovery, and machine learning classification. The package is particularly suited for viral sequence classification and genomic pattern recognition.

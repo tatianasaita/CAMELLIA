@@ -2,9 +2,12 @@
 % Please edit documentation in R/calculate_cluster_motifs.R
 \name{calculate_cluster_motifs}
 \alias{calculate_cluster_motifs}
+\alias{calculate_cluster_motifs.cluster_dendrogram_result}
 \title{Calculate Cluster Motifs from K-mer Counts}
 \usage{
 calculate_cluster_motifs(x, ...)
+
+\method{calculate_cluster_motifs}{cluster_dendrogram_result}(x, data_result = NULL, ...)
 }
 \arguments{
 \item{x}{Object of class 'cluster_dendrogram_result' from cluster_dendrogram().}

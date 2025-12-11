@@ -1,12 +1,19 @@
 #' Train Random Forest and XGBoost Models
 #'
-#' @param dataset_traintest List containing classification_dataset and validation_dataset.
-#' @param selected_motifs List of character vectors containing selected motifs per class.
+#' @param dataset_traintest List from select_sample_train_validation() containing
+#'   classification_dataset and validation_dataset.
+#' @param selected_motifs List from select_motifs() with character vectors of motifs per class.
 #' @param prop_train Numeric. Proportion for training (0-1). Default: 0.7.
 #' @param cv_folds Integer. Number of cross-validation folds. Default: 5.
 #' @param seed Integer. Random seed for reproducibility. Default: 123.
 #'
-#' @return Object of class train_models_rf_xgboost with models and predictions.
+#' @return Object of class "train_models_rf_xgboost" with:
+#'   \itemize{
+#'     \item model_rf: Trained Random Forest model
+#'     \item model_xgb: Trained XGBoost model
+#'     \item model_comparison: Data frame with performance metrics
+#'     \item All predictions and confusion matrices
+#'   }
 #'
 #' @export
 train_models_rf_xgboost <- function(dataset_traintest,
@@ -15,128 +22,94 @@ train_models_rf_xgboost <- function(dataset_traintest,
                                     cv_folds = 5,
                                     seed = 123) {
 
-  # === INPUT VALIDATION ===
+  # ===== VALIDATION =====
 
   if (!is.list(dataset_traintest) || is.data.frame(dataset_traintest)) {
-    stop("'dataset_traintest' must be a list (not a data.frame)")
+    stop("'dataset_traintest' must be a list (not a data.frame)", call. = FALSE)
   }
 
-  if (!("classification_dataset" %in% names(dataset_traintest))) {
-    stop("'dataset_traintest' must contain 'classification_dataset'")
-  }
-
-  if (!("validation_dataset" %in% names(dataset_traintest))) {
-    stop("'dataset_traintest' must contain 'validation_dataset'")
+  required_names <- c("classification_dataset", "validation_dataset")
+  if (!all(required_names %in% names(dataset_traintest))) {
+    stop("'dataset_traintest' must contain 'classification_dataset' and 'validation_dataset'",
+         call. = FALSE)
   }
 
   if (!is.list(selected_motifs) || length(selected_motifs) == 0) {
-    stop("'selected_motifs' must be a non-empty list of motifs per class")
+    stop("'selected_motifs' must be a non-empty list", call. = FALSE)
   }
 
   if (!is.numeric(prop_train) || prop_train <= 0 || prop_train >= 1) {
-    stop("'prop_train' must be a number between 0 and 1")
+    stop("'prop_train' must be between 0 and 1", call. = FALSE)
   }
 
-  if (!is.numeric(cv_folds) || cv_folds <= 0 || cv_folds != as.integer(cv_folds)) {
-    stop("'cv_folds' must be a positive integer")
+  if (!.is_positive_integer(cv_folds)) {
+    stop("'cv_folds' must be a positive integer", call. = FALSE)
   }
 
   if (!is.numeric(seed) || seed != as.integer(seed)) {
-    stop("'seed' must be an integer")
+    stop("'seed' must be an integer", call. = FALSE)
   }
 
-  # === PACKAGE REQUIREMENTS ===
-
+  # Check required packages
   required_packages <- c("caret", "randomForest", "xgboost")
-
   for (pkg in required_packages) {
     if (!requireNamespace(pkg, quietly = TRUE)) {
-      stop(sprintf("Package '%s' is required but not installed. Install with: install.packages('%s')",
-                   pkg, pkg))
+      stop("Package '", pkg, "' required. Install with: install.packages('", pkg, "')",
+           call. = FALSE)
     }
   }
 
   set.seed(seed)
 
-  cat("=== DATA PREPARATION ===\n\n")
+  # ===== DATA PREPARATION =====
 
   classification_dataset <- dataset_traintest$classification_dataset
   validation_dataset <- dataset_traintest$validation_dataset
 
-  if ("CLASS" %in% colnames(classification_dataset) &&
-      !("class" %in% colnames(classification_dataset))) {
-    cat("Renaming 'CLASS' to 'class' in classification_dataset...\n")
-    colnames(classification_dataset)[colnames(classification_dataset) == "CLASS"] <- "class"
-  }
+  # Standardize column name to lowercase
+  classification_dataset <- .rename_class_column(classification_dataset)
+  validation_dataset <- .rename_class_column(validation_dataset)
 
-  if ("CLASS" %in% colnames(validation_dataset) &&
-      !("class" %in% colnames(validation_dataset))) {
-    cat("Renaming 'CLASS' to 'class' in validation_dataset...\n")
-    colnames(validation_dataset)[colnames(validation_dataset) == "CLASS"] <- "class"
-  }
-
+  # Extract motifs
   motifs_all <- unique(unlist(selected_motifs))
-
-  cat("Total unique motifs selected:", length(motifs_all), "\n")
-  cat("Classes in motif selector:", paste(names(selected_motifs), collapse = ", "), "\n\n")
-
   required_columns <- c(motifs_all, "class")
-  missing_class <- setdiff(required_columns, colnames(classification_dataset))
-  missing_valid <- setdiff(required_columns, colnames(validation_dataset))
 
-  if (length(missing_class) > 0) {
-    stop(sprintf("Missing columns in classification_dataset: %s",
-                 paste(missing_class, collapse = ", ")))
-  }
+  # Validate columns
+  .validate_columns(classification_dataset, required_columns, "classification_dataset")
+  .validate_columns(validation_dataset, required_columns, "validation_dataset")
 
-  if (length(missing_valid) > 0) {
-    stop(sprintf("Missing columns in validation_dataset: %s",
-                 paste(missing_valid, collapse = ", ")))
-  }
-
+  # Partition data
   train_partition <- caret::createDataPartition(
     classification_dataset$class,
     p = prop_train,
     list = FALSE
   )
 
-  traindata <- classification_dataset[train_partition, ]
-  testdata <- classification_dataset[-train_partition, ]
+  traindata <- classification_dataset[train_partition, required_columns, drop = FALSE]
+  testdata <- classification_dataset[-train_partition, required_columns, drop = FALSE]
+  validationdata <- validation_dataset[, required_columns, drop = FALSE]
 
-  train_selected <- traindata[, required_columns, drop = FALSE]
-  test_selected <- testdata[, required_columns, drop = FALSE]
-  validation_selected <- validation_dataset[, required_columns, drop = FALSE]
+  # Convert to factors with consistent levels
+  traindata$class <- factor(traindata$class)
+  testdata$class <- factor(testdata$class, levels = levels(traindata$class))
+  validationdata$class <- factor(validationdata$class, levels = levels(traindata$class))
 
-  train_selected$class <- factor(train_selected$class)
-  test_selected$class <- factor(test_selected$class, levels = levels(train_selected$class))
-  validation_selected$class <- factor(validation_selected$class,
-                                      levels = levels(train_selected$class))
+  cat("\n=== DATA SUMMARY ===\n")
+  cat("Training:", nrow(traindata), "| Test:", nrow(testdata),
+      "| Validation:", nrow(validationdata), "\n")
+  cat("Motifs:", length(motifs_all), "| Classes:", nlevels(traindata$class), "\n\n")
 
-  cat("Training set observations:", nrow(train_selected), "\n")
-  cat("Test set observations:", nrow(test_selected), "\n")
-  cat("Validation set observations:", nrow(validation_selected), "\n")
-  cat("Number of selected motifs:", length(motifs_all), "\n\n")
-
-  cat("Class distribution in training set:\n")
-  print(table(train_selected$class))
-
-  cat("\nClass distribution in test set:\n")
-  print(table(test_selected$class))
-
-  cat("\nClass distribution in validation set:\n")
-  print(table(validation_selected$class))
-
+  # CV control
   control <- caret::trainControl(
     method = "cv",
     number = cv_folds,
     savePredictions = "final",
-    classProbs = TRUE,
-    allowParallel = TRUE
+    classProbs = TRUE
   )
 
-  # ==================== RANDOM FOREST ====================
-  cat("\n=== RANDOM FOREST MODEL TRAINING ===\n")
-  cat("Training Random Forest model with", cv_folds, "cross-validation folds...\n\n")
+  # ===== TRAIN RANDOM FOREST =====
+
+  cat("=== TRAINING RANDOM FOREST ===\n")
 
   start_time_rf <- Sys.time()
 
@@ -144,7 +117,7 @@ train_models_rf_xgboost <- function(dataset_traintest,
     suppressMessages(
       caret::train(
         class ~ .,
-        data = train_selected,
+        data = traindata,
         method = "rf",
         trControl = control,
         ntree = 500,
@@ -156,30 +129,20 @@ train_models_rf_xgboost <- function(dataset_traintest,
 
   time_rf <- as.numeric(difftime(Sys.time(), start_time_rf, units = "secs"))
 
-  cat("Random Forest model trained successfully! Time:", round(time_rf, 2), "seconds\n")
-  cat("Top 10 important variables:\n")
-  var_imp_rf <- caret::varImp(model_rf)
-  print(head(var_imp_rf, 10))
+  # Predictions
+  pred_test_rf <- predict(model_rf, newdata = testdata)
+  pred_validation_rf <- predict(model_rf, newdata = validationdata)
 
-  cat("\n--- Random Forest - Test Set ---\n")
-  pred_test_rf <- predict(model_rf, newdata = test_selected)
-  actuals_test <- test_selected$class
-  confusion_matrix_test_rf <- caret::confusionMatrix(pred_test_rf, actuals_test)
+  cm_test_rf <- caret::confusionMatrix(pred_test_rf, testdata$class)
+  cm_validation_rf <- caret::confusionMatrix(pred_validation_rf, validationdata$class)
 
-  cat("Accuracy on test set:", round(confusion_matrix_test_rf$overall["Accuracy"], 4), "\n")
-  cat("Kappa on test set:", round(confusion_matrix_test_rf$overall["Kappa"], 4), "\n")
+  cat("Completed in", round(time_rf, 2), "seconds\n")
+  cat("Test Accuracy:", round(cm_test_rf$overall["Accuracy"], 4), "\n")
+  cat("Validation Accuracy:", round(cm_validation_rf$overall["Accuracy"], 4), "\n\n")
 
-  cat("\n--- Random Forest - Validation Set ---\n")
-  pred_validation_rf <- predict(model_rf, newdata = validation_selected)
-  actuals_validation <- validation_selected$class
-  confusion_matrix_validation_rf <- caret::confusionMatrix(pred_validation_rf, actuals_validation)
+  # ===== TRAIN XGBOOST =====
 
-  cat("Accuracy on validation set:", round(confusion_matrix_validation_rf$overall["Accuracy"], 4), "\n")
-  cat("Kappa on validation set:", round(confusion_matrix_validation_rf$overall["Kappa"], 4), "\n")
-
-  # ==================== XGBOOST ====================
-  cat("\n=== XGBOOST MODEL TRAINING ===\n")
-  cat("Training XGBoost model with", cv_folds, "cross-validation folds...\n\n")
+  cat("=== TRAINING XGBOOST ===\n")
 
   start_time_xgb <- Sys.time()
 
@@ -190,7 +153,7 @@ train_models_rf_xgboost <- function(dataset_traintest,
           suppressMessages(
             caret::train(
               class ~ .,
-              data = train_selected,
+              data = traindata,
               method = "xgbTree",
               trControl = control,
               verbose = FALSE
@@ -204,146 +167,192 @@ train_models_rf_xgboost <- function(dataset_traintest,
 
   time_xgb <- as.numeric(difftime(Sys.time(), start_time_xgb, units = "secs"))
 
-  cat("XGBoost model trained successfully! Time:", round(time_xgb, 2), "seconds\n")
-  cat("Top 10 important variables:\n")
-  var_imp_xgb <- caret::varImp(model_xgb)
-  print(head(var_imp_xgb, 10))
+  # Predictions
+  pred_test_xgb <- predict(model_xgb, newdata = testdata)
+  pred_validation_xgb <- predict(model_xgb, newdata = validationdata)
 
-  cat("\n--- XGBoost - Test Set ---\n")
-  pred_test_xgb <- predict(model_xgb, newdata = test_selected)
-  confusion_matrix_test_xgb <- caret::confusionMatrix(pred_test_xgb, actuals_test)
+  cm_test_xgb <- caret::confusionMatrix(pred_test_xgb, testdata$class)
+  cm_validation_xgb <- caret::confusionMatrix(pred_validation_xgb, validationdata$class)
 
-  cat("Accuracy on test set:", round(confusion_matrix_test_xgb$overall["Accuracy"], 4), "\n")
-  cat("Kappa on test set:", round(confusion_matrix_test_xgb$overall["Kappa"], 4), "\n")
+  cat("Completed in", round(time_xgb, 2), "seconds\n")
+  cat("Test Accuracy:", round(cm_test_xgb$overall["Accuracy"], 4), "\n")
+  cat("Validation Accuracy:", round(cm_validation_xgb$overall["Accuracy"], 4), "\n\n")
 
-  cat("\n--- XGBoost - Validation Set ---\n")
-  pred_validation_xgb <- predict(model_xgb, newdata = validation_selected)
-  confusion_matrix_validation_xgb <- caret::confusionMatrix(pred_validation_xgb, actuals_validation)
+  # ===== MODEL COMPARISON =====
 
-  cat("Accuracy on validation set:", round(confusion_matrix_validation_xgb$overall["Accuracy"], 4), "\n")
-  cat("Kappa on validation set:", round(confusion_matrix_validation_xgb$overall["Kappa"], 4), "\n")
-
-  # ==================== MODEL COMPARISON ====================
-  cat("\n=== MODEL COMPARISON ===\n\n")
-
-  acc_test_rf <- confusion_matrix_test_rf$overall["Accuracy"]
-  acc_test_xgb <- confusion_matrix_test_xgb$overall["Accuracy"]
-  kappa_test_rf <- confusion_matrix_test_rf$overall["Kappa"]
-  kappa_test_xgb <- confusion_matrix_test_xgb$overall["Kappa"]
-
-  acc_validation_rf <- confusion_matrix_validation_rf$overall["Accuracy"]
-  acc_validation_xgb <- confusion_matrix_validation_xgb$overall["Accuracy"]
-  kappa_validation_rf <- confusion_matrix_validation_rf$overall["Kappa"]
-  kappa_validation_xgb <- confusion_matrix_validation_xgb$overall["Kappa"]
-
-  model_comparison_table <- data.frame(
+  model_comparison <- data.frame(
     Model = c("Random Forest", "XGBoost"),
-    Accuracy_Test = c(round(acc_test_rf, 4), round(acc_test_xgb, 4)),
-    Kappa_Test = c(round(kappa_test_rf, 4), round(kappa_test_xgb, 4)),
-    Accuracy_Validation = c(round(acc_validation_rf, 4), round(acc_validation_xgb, 4)),
-    Kappa_Validation = c(round(kappa_validation_rf, 4), round(kappa_validation_xgb, 4)),
-    Training_Time_s = c(round(time_rf, 2), round(time_xgb, 2)),
-    row.names = NULL,
+    Accuracy_Test = round(c(cm_test_rf$overall["Accuracy"],
+                            cm_test_xgb$overall["Accuracy"]), 4),
+    Kappa_Test = round(c(cm_test_rf$overall["Kappa"],
+                         cm_test_xgb$overall["Kappa"]), 4),
+    Accuracy_Validation = round(c(cm_validation_rf$overall["Accuracy"],
+                                  cm_validation_xgb$overall["Accuracy"]), 4),
+    Kappa_Validation = round(c(cm_validation_rf$overall["Kappa"],
+                               cm_validation_xgb$overall["Kappa"]), 4),
+    Time_seconds = round(c(time_rf, time_xgb), 2),
     stringsAsFactors = FALSE
   )
 
-  cat("Performance Metrics Comparison:\n")
-  print(model_comparison_table)
+  cat("=== MODEL COMPARISON ===\n")
+  print(model_comparison)
+  cat("\n")
 
-  best_test <- if (acc_test_rf > acc_test_xgb) "Random Forest" else "XGBoost"
-  best_validation <- if (acc_validation_rf > acc_validation_xgb) "Random Forest" else "XGBoost"
+  best_test <- if (model_comparison$Accuracy_Test[1] > model_comparison$Accuracy_Test[2]) {
+    "Random Forest"
+  } else {
+    "XGBoost"
+  }
 
-  cat("\n Best model on test set:", best_test,
-      "(Accuracy:", round(max(acc_test_rf, acc_test_xgb), 4), ")\n")
-  cat(" Best model on validation set:", best_validation,
-      "(Accuracy:", round(max(acc_validation_rf, acc_validation_xgb), 4), ")\n")
+  best_validation <- if (model_comparison$Accuracy_Validation[1] > model_comparison$Accuracy_Validation[2]) {
+    "Random Forest"
+  } else {
+    "XGBoost"
+  }
 
-  cat("\n--- Per-Class Metrics (Random Forest - Test) ---\n")
-  print(confusion_matrix_test_rf$byClass)
+  cat("Best on test:", best_test, "\n")
+  cat("Best on validation:", best_validation, "\n\n")
 
-  cat("\n--- Per-Class Metrics (XGBoost - Test) ---\n")
-  print(confusion_matrix_test_xgb$byClass)
+  # ===== CONFUSION MATRICES - VALIDATION SET =====
 
-  cat("\n=== SAVING RESULTS ===\n\n")
+  cat("=== CONFUSION MATRIX - RANDOM FOREST (Validation Set) ===\n\n")
+  print(cm_validation_rf$table)
+  cat("\nOverall Statistics:\n")
+  cat("  Accuracy:", round(cm_validation_rf$overall["Accuracy"], 4), "\n")
+  cat("  Kappa:", round(cm_validation_rf$overall["Kappa"], 4), "\n")
+  cat("  95% CI: (", round(cm_validation_rf$overall["AccuracyLower"], 4), ", ",
+      round(cm_validation_rf$overall["AccuracyUpper"], 4), ")\n\n")
 
+  cat("=== CONFUSION MATRIX - XGBOOST (Validation Set) ===\n\n")
+  print(cm_validation_xgb$table)
+  cat("\nOverall Statistics:\n")
+  cat("  Accuracy:", round(cm_validation_xgb$overall["Accuracy"], 4), "\n")
+  cat("  Kappa:", round(cm_validation_xgb$overall["Kappa"], 4), "\n")
+  cat("  95% CI: (", round(cm_validation_xgb$overall["AccuracyLower"], 4), ", ",
+      round(cm_validation_xgb$overall["AccuracyUpper"], 4), ")\n\n")
+
+  # ===== SAVE RESULTS =====
+
+  cat("=== SAVING RESULTS ===\n")
   save(model_rf, file = "model_rf.RData")
   save(model_xgb, file = "model_xgboost.RData")
-  save(model_comparison_table, file = "model_comparison.RData")
+  save(model_comparison, file = "model_comparison.RData")
+  cat("Files saved: model_rf.RData, model_xgboost.RData, model_comparison.RData\n\n")
 
-  cat(" Models saved:\n")
-  cat("  - model_rf.RData\n")
-  cat("  - model_xgboost.RData\n")
-  cat("  - model_comparison.RData\n\n")
+  # ===== RETURN =====
 
-  result <- list(
-    model_rf = model_rf,
-    model_xgb = model_xgb,
-    train_data = train_selected,
-    test_data = test_selected,
-    validation_data = validation_selected,
-    predictions_test_rf = pred_test_rf,
-    predictions_validation_rf = pred_validation_rf,
-    predictions_test_xgb = pred_test_xgb,
-    predictions_validation_xgb = pred_validation_xgb,
-    actuals_test = actuals_test,
-    actuals_validation = actuals_validation,
-    confusion_matrix_test_rf = confusion_matrix_test_rf,
-    confusion_matrix_validation_rf = confusion_matrix_validation_rf,
-    confusion_matrix_test_xgb = confusion_matrix_test_xgb,
-    confusion_matrix_validation_xgb = confusion_matrix_validation_xgb,
-    model_comparison = model_comparison_table,
-    best_model_test = best_test,
-    best_model_validation = best_validation,
-    motifs_used = motifs_all,
-    motifs_per_class = selected_motifs,
-    cv_folds = cv_folds,
-    prop_train = prop_train,
-    seed = seed,
-    time_rf = time_rf,
-    time_xgb = time_xgb
+  result <- structure(
+    list(
+      model_rf = model_rf,
+      model_xgb = model_xgb,
+      train_data = traindata,
+      test_data = testdata,
+      validation_data = validationdata,
+      predictions_test_rf = pred_test_rf,
+      predictions_validation_rf = pred_validation_rf,
+      predictions_test_xgb = pred_test_xgb,
+      predictions_validation_xgb = pred_validation_xgb,
+      actuals_test = testdata$class,
+      actuals_validation = validationdata$class,
+      confusion_matrix_test_rf = cm_test_rf,
+      confusion_matrix_validation_rf = cm_validation_rf,
+      confusion_matrix_test_xgb = cm_test_xgb,
+      confusion_matrix_validation_xgb = cm_validation_xgb,
+      model_comparison = model_comparison,
+      best_model_test = best_test,
+      best_model_validation = best_validation,
+      motifs_used = motifs_all,
+      cv_folds = cv_folds,
+      prop_train = prop_train,
+      seed = seed
+    ),
+    class = c("train_models_rf_xgboost", "list")
   )
 
-  class(result) <- c("train_models_rf_xgboost", "list")
-
-  return(result)
+  return(invisible(result))
 }
 
 
-#' Print method for train_models_rf_xgboost objects
-#'
-#' @param x Object of class train_models_rf_xgboost.
-#' @param ... Additional arguments (unused).
-#'
+# ===== INTERNAL FUNCTIONS =====
+
+#' Check if value is a positive integer
+#' @keywords internal
+.is_positive_integer <- function(x) {
+  is.numeric(x) && length(x) == 1L && x > 0 && x == as.integer(x)
+}
+
+
+#' Rename CLASS column to class
+#' @keywords internal
+.rename_class_column <- function(data) {
+  if ("CLASS" %in% colnames(data) && !("class" %in% colnames(data))) {
+    colnames(data)[colnames(data) == "CLASS"] <- "class"
+  }
+  data
+}
+
+
+#' Validate required columns
+#' @keywords internal
+.validate_columns <- function(data, required_cols, dataset_name) {
+  missing <- setdiff(required_cols, colnames(data))
+  if (length(missing) > 0) {
+    stop("Missing columns in ", dataset_name, ": ",
+         paste(missing, collapse = ", "), call. = FALSE)
+  }
+}
+
+
+# ===== S3 METHODS =====
+
 #' @export
 print.train_models_rf_xgboost <- function(x, ...) {
-  cat("=== Train Models RF XGBoost Object ===\n\n")
-  cat("Models trained with", x$cv_folds, "cross-validation folds\n")
-  cat("Training proportion:", x$prop_train, "\n")
-  cat("Number of motifs used:", length(x$motifs_used), "\n")
-  cat("Number of classes:", nlevels(x$actuals_test), "\n\n")
-  cat("Performance Summary:\n")
+  cat("\n=== Train Models RF/XGBoost Summary ===\n\n")
+  cat("Training configuration:\n")
+  cat("  CV folds:", x$cv_folds, "\n")
+  cat("  Train proportion:", x$prop_train, "\n")
+  cat("  Motifs used:", length(x$motifs_used), "\n")
+  cat("  Classes:", nlevels(x$actuals_test), "\n\n")
+  cat("Performance comparison:\n")
   print(x$model_comparison)
-  cat("\nBest model on test set:", x$best_model_test, "\n")
-  cat("Best model on validation set:", x$best_model_validation, "\n")
+  cat("\nBest model (test):", x$best_model_test, "\n")
+  cat("Best model (validation):", x$best_model_validation, "\n")
+  invisible(x)
 }
 
 
-#' Summary method for train_models_rf_xgboost objects
-#'
-#' @param object Object of class train_models_rf_xgboost.
-#' @param ... Additional arguments (unused).
-#'
 #' @export
 summary.train_models_rf_xgboost <- function(object, ...) {
-  cat("=== Model Summary ===\n\n")
-  cat("Random Forest - Test Set Accuracy:",
+  cat("\n=== Detailed Model Summary ===\n\n")
+
+  cat("RANDOM FOREST:\n")
+  cat("  Test Accuracy:",
       round(object$confusion_matrix_test_rf$overall["Accuracy"], 4), "\n")
-  cat("XGBoost - Test Set Accuracy:",
-      round(object$confusion_matrix_test_xgb$overall["Accuracy"], 4), "\n\n")
-  cat("Random Forest - Validation Set Accuracy:",
+  cat("  Test Kappa:",
+      round(object$confusion_matrix_test_rf$overall["Kappa"], 4), "\n")
+  cat("  Validation Accuracy:",
       round(object$confusion_matrix_validation_rf$overall["Accuracy"], 4), "\n")
-  cat("XGBoost - Validation Set Accuracy:",
-      round(object$confusion_matrix_validation_xgb$overall["Accuracy"], 4), "\n\n")
-  cat("Training time - RF:", round(object$time_rf, 2), "seconds\n")
-  cat("Training time - XGBoost:", round(object$time_xgb, 2), "seconds\n")
+  cat("  Validation Kappa:",
+      round(object$confusion_matrix_validation_rf$overall["Kappa"], 4), "\n\n")
+
+  cat("XGBOOST:\n")
+  cat("  Test Accuracy:",
+      round(object$confusion_matrix_test_xgb$overall["Accuracy"], 4), "\n")
+  cat("  Test Kappa:",
+      round(object$confusion_matrix_test_xgb$overall["Kappa"], 4), "\n")
+  cat("  Validation Accuracy:",
+      round(object$confusion_matrix_validation_xgb$overall["Accuracy"], 4), "\n")
+  cat("  Validation Kappa:",
+      round(object$confusion_matrix_validation_xgb$overall["Kappa"], 4), "\n\n")
+
+  cat("COMPARISON:\n")
+  print(object$model_comparison)
+
+  cat("\n--- Confusion Matrix: Random Forest (Validation) ---\n")
+  print(object$confusion_matrix_validation_rf$table)
+
+  cat("\n--- Confusion Matrix: XGBoost (Validation) ---\n")
+  print(object$confusion_matrix_validation_xgb$table)
+
+  invisible(object)
 }

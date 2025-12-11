@@ -5,9 +5,6 @@
 #' min-max normalization applied independently to each cluster column.
 #'
 #' @param x Object of class 'cluster_dendrogram_result' from cluster_dendrogram().
-#' @param data_result Optional. List containing 'kmers' and 'metadata' data.frames.
-#'   If NULL, extracted from x$data_result. Output from create_data() with
-#'   cluster assignments added by cluster_dendrogram().
 #' @param ... Additional arguments passed to methods.
 #'
 #' @return A data.frame with k-mer motifs by cluster (normalized).
@@ -55,6 +52,11 @@ calculate_cluster_motifs <- function(x, ...) {
 calculate_cluster_motifs.default <- function(x, ...) {
   stop("'x' must be an object of class 'cluster_dendrogram_result'")
 }
+
+#' @rdname calculate_cluster_motifs
+#' @param data_result Optional. List containing 'kmers' and 'metadata' data.frames.
+#'   If NULL, extracted from x$data_result. Output from create_data() with
+#'   cluster assignments added by cluster_dendrogram().
 #' @export
 calculate_cluster_motifs.cluster_dendrogram_result <- function(
     x,
@@ -127,7 +129,7 @@ calculate_cluster_motifs.cluster_dendrogram_result <- function(
   numeric_cols <- colnames(kmers_numeric)
 
   # Get unique clusters and cluster count
-  cluster_ids <- unique(cluster_assignments)
+  cluster_ids <- sort(unique(cluster_assignments))
   n_clusters <- length(cluster_ids)
 
   # ===== AGGREGATE K-MERS BY CLUSTER (BASE R) =====
