@@ -1,401 +1,216 @@
 # tests/testthat/test-seq_classification.R
 
-library(testthat)
-
 # ===== HELPER FUNCTION =====
-create_test_sequences <- function(n_per_class = 30) {
-  temp_dir <- file.path(tempdir(), paste0("test_seq_", sample(1:10000, 1)))
-  dir.create(temp_dir, showWarnings = FALSE, recursive = TRUE)
 
-  # Create sequences with realistic variation
-  set.seed(123)
+create_test_fasta <- function(dir, n_seqs = 10, seq_length = 1000, n_classes = 2) {
+  if (dir.exists(dir)) {
+    unlink(dir, recursive = TRUE)
+  }
+  dir.create(dir, showWarnings = FALSE, recursive = TRUE)
 
-  for (class_name in c("ClassA", "ClassB")) {
-    class_file <- file.path(temp_dir, paste0(class_name, ".fasta"))
+  classes <- paste0("Class", LETTERS[1:n_classes])
+  seq_per_class <- n_seqs %/% n_classes
 
-    sequences <- character()
-    for (i in 1:n_per_class) {
-      # Create slightly different sequences for each class
-      if (class_name == "ClassA") {
-        base_seq <- paste(rep("ATGCATGC", 100), collapse = "")
-      } else {
-        base_seq <- paste(rep("GCTAGCTA", 100), collapse = "")
-      }
+  seq_counter <- 1
+  for (class_idx in 1:n_classes) {
+    class_name <- classes[class_idx]
+    file_path <- file.path(dir, paste0(class_name, ".fasta"))
 
-      # Add some random variation
-      seq_chars <- strsplit(base_seq, "")[[1]]
-      n_mutations <- sample(5:15, 1)
-      mutation_pos <- sample(1:length(seq_chars), n_mutations)
-      seq_chars[mutation_pos] <- sample(c("A", "T", "G", "C"), n_mutations, replace = TRUE)
-
-      sequences <- c(sequences,
-                     sprintf(">%s_seq%d", class_name, i),
-                     paste(seq_chars, collapse = ""))
+    for (i in 1:seq_per_class) {
+      seq <- paste(sample(c("A", "T", "G", "C"), seq_length, replace = TRUE), collapse = "")
+      cat(paste0(">", class_name, "_seq", seq_counter, " ", class_name, "\n"),
+          seq, "\n",
+          file = file_path,
+          append = file.exists(file_path))
+      seq_counter <- seq_counter + 1
     }
-
-    writeLines(sequences, class_file)
   }
 
-  return(temp_dir)
+  invisible(NULL)
 }
 
-# Helper to create valid cluster_result
-create_mock_cluster_result <- function() {
-  metadata <- data.frame(
-    sequence_name = c("seq1", "seq2", "seq3", "seq4", "seq5", "seq6"),
-    class = c("A", "A", "A", "B", "B", "B"),
-    length = c(500, 900, 1000, 600, 850, 1100),
-    stringsAsFactors = FALSE
-  )
+# ===== TEST 1: PARAMETER VALIDATION =====
 
-  kmers <- data.frame(
-    kmer1 = c(1, 2, 3, 4, 5, 6),
-    kmer2 = c(5, 6, 7, 8, 9, 10),
-    kmer3 = c(9, 10, 11, 12, 13, 14)
-  )
-  rownames(kmers) <- metadata$sequence_name
-
-  list(
-    data_result = list(
-      metadata = metadata,
-      kmers = kmers,
-      k = 3
-    )
-  )
-}
-
-# ===== VALIDATION TESTS =====
-
-test_that("select_sample_train_validation validates cluster_result structure", {
-  # Missing data_result
-  expect_error(
-    select_sample_train_validation(
-      cluster_result = list(wrong = "structure"),
-      k_per_class = 1
-    ),
-    "'cluster_result' must be a list from cluster_dendrogram\\(\\) with 'data_result'"
-  )
-
-  # data_result not a list
-  expect_error(
-    select_sample_train_validation(
-      cluster_result = list(data_result = "not a list"),
-      k_per_class = 1
-    ),
-    "'data_result' must be a list"
-  )
-
-  # Missing metadata or kmers
-  expect_error(
-    select_sample_train_validation(
-      cluster_result = list(data_result = list(metadata = data.frame())),
-      k_per_class = 1
-    ),
-    "'data_result' must contain 'metadata' and 'kmers'"
-  )
-})
-
-test_that("select_sample_train_validation validates metadata structure", {
-  expect_error(
-    select_sample_train_validation(
-      cluster_result = list(
-        data_result = list(
-          metadata = data.frame(wrong = "columns"),
-          kmers = data.frame(k1 = 1)
-        )
-      ),
-      k_per_class = 1
-    ),
-    "'metadata' missing required columns"
-  )
-})
-
-test_that("select_sample_train_validation validates k_per_class", {
-  cluster_result <- create_mock_cluster_result()
-
-  expect_error(
-    select_sample_train_validation(cluster_result, k_per_class = "invalid"),
-    "'k_per_class' must be numeric"
-  )
-
-  expect_error(
-    select_sample_train_validation(cluster_result, k_per_class = -1),
-    "'k_per_class' must be positive"
-  )
-
-  expect_error(
-    select_sample_train_validation(cluster_result, k_per_class = 1.5),
-    "'k_per_class' must be an integer"
-  )
-
-  expect_error(
-    select_sample_train_validation(cluster_result, k_per_class = c(1, 2)),
-    "'k_per_class' must be a single value"
-  )
-})
-
-test_that("select_sample_train_validation validates min_size", {
-  cluster_result <- create_mock_cluster_result()
-
-  expect_error(
-    select_sample_train_validation(cluster_result, k_per_class = 1, min_size = "invalid"),
-    "'min_size' must be numeric"
-  )
-
-  expect_error(
-    select_sample_train_validation(cluster_result, k_per_class = 1, min_size = -100),
-    "'min_size' must be positive"
-  )
-
-  expect_error(
-    select_sample_train_validation(cluster_result, k_per_class = 1, min_size = 100.5),
-    "'min_size' must be an integer"
-  )
-})
-
-test_that("select_sample_train_validation validates external_validation_fasta_dir", {
-  cluster_result <- create_mock_cluster_result()
-
-  expect_error(
-    select_sample_train_validation(
-      cluster_result,
-      k_per_class = 1,
-      external_validation_fasta_dir = 123
-    ),
-    "'external_validation_fasta_dir' must be a character string or NULL"
-  )
-
-  expect_error(
-    select_sample_train_validation(
-      cluster_result,
-      k_per_class = 1,
-      external_validation_fasta_dir = "/nonexistent/path"
-    ),
-    "External validation directory does not exist"
-  )
-})
-
-test_that("select_sample_train_validation validates k_for_external_validation", {
+test_that("seq_classification validates parameters", {
   skip_if_not_installed("seqinr")
 
-  cluster_result <- create_mock_cluster_result()
-  temp_dir <- create_test_sequences(5)
-  on.exit(unlink(temp_dir, recursive = TRUE))
+  temp_dir <- file.path(tempdir(), "test_validation")
+  on.exit(unlink(temp_dir, recursive = TRUE), add = TRUE)
 
+  create_test_fasta(temp_dir, n_seqs = 10, n_classes = 2)
+
+  # Invalid k
   expect_error(
-    select_sample_train_validation(
-      cluster_result,
-      k_per_class = 1,
-      external_validation_fasta_dir = temp_dir,
-      k_for_external_validation = "invalid"
-    ),
-    "'k_for_external_validation' must be numeric"
+    seq_classification(input_dir = temp_dir, k = -1),
+    "'k' must be a single positive integer"
   )
 
+  # Invalid hom_thresh
   expect_error(
-    select_sample_train_validation(
-      cluster_result,
-      k_per_class = 1,
-      external_validation_fasta_dir = temp_dir,
-      k_for_external_validation = -1
-    ),
-    "'k_for_external_validation' must be positive"
+    seq_classification(input_dir = temp_dir, hom_thresh = 1.5),
+    "between 0 and 1"
+  )
+
+  # Invalid dist_method
+  expect_error(
+    seq_classification(input_dir = temp_dir, dist_method = "invalid"),
+    "must be one of"
+  )
+
+  # Invalid directory
+  expect_error(
+    seq_classification(input_dir = "/nonexistent/path"),
+    "Directory does not exist"
   )
 })
 
-test_that("select_sample_train_validation validates row count match", {
-  metadata <- data.frame(
-    sequence_name = c("seq1", "seq2"),
-    class = c("A", "B"),
-    length = c(900, 1000)
-  )
+# ===== TEST 2: COMPLETE PIPELINE =====
 
-  kmers <- data.frame(kmer1 = c(1, 2, 3))  # Different number of rows
+test_that("seq_classification completes full pipeline", {
+  skip_if_not_installed("seqinr")
+  skip_if_not_installed("randomForest")
+  skip_if_not_installed("xgboost")
+  skip_if_not_installed("caret")
 
-  expect_error(
-    select_sample_train_validation(
-      cluster_result = list(data_result = list(metadata = metadata, kmers = kmers)),
-      k_per_class = 1
-    ),
-    "'metadata' and 'kmers' must have the same number of rows"
-  )
-})
+  test_id <- format(Sys.time(), "%Y%m%d_%H%M%OS3")
+  temp_dir <- file.path(tempdir(), paste0("seq_test_", test_id))
+  on.exit(unlink(temp_dir, recursive = TRUE), add = TRUE)
 
-test_that("select_sample_train_validation fails when no sequences meet min_size", {
-  cluster_result <- list(
-    data_result = list(
-      metadata = data.frame(
-        sequence_name = c("seq1", "seq2"),
-        class = c("A", "B"),
-        length = c(500, 600),
-        stringsAsFactors = FALSE
-      ),
-      kmers = data.frame(
-        kmer1 = c(1, 2),
-        kmer2 = c(3, 4)
-      ),
-      k = 3
+  # Create 60 sequences (30 per class)
+  create_test_fasta(temp_dir, n_seqs = 60, seq_length = 1200, n_classes = 2)
+
+  # Verify 2 files created
+  fasta_files <- list.files(temp_dir, pattern = "\\.fasta$")
+  expect_equal(length(fasta_files), 2)
+
+  # Run pipeline
+  result <- suppressMessages(
+    seq_classification(
+      input_dir = temp_dir,
+      k = 4,
+      k_per_class = 15,
+      min_size = 800,
+      n_motifs = 30,
+      prop_train = 0.7,
+      cv_folds = 3,
+      verbose = FALSE
     )
   )
-  rownames(cluster_result$data_result$kmers) <- cluster_result$data_result$metadata$sequence_name
 
-  expect_error(
-    suppressMessages(
-      select_sample_train_validation(cluster_result, k_per_class = 1, min_size = 800)
-    ),
-    "No sequences available with length >="
-  )
+  # Check result is a list
+  expect_type(result, "list")
+
+  # Check essential components exist
+  expect_true("classification_results" %in% names(result))
+  expect_true("best_model" %in% names(result))
+  expect_true("validation_accuracy" %in% names(result))
+  expect_true("confusion_matrix" %in% names(result))
+  expect_true("parameters" %in% names(result))
+
+  # Validate best_model
+  expect_true(result$best_model %in% c("Random Forest", "XGBoost"))
+
+  # Validate accuracy range
+  expect_true(result$validation_accuracy >= 0)
+  expect_true(result$validation_accuracy <= 1)
+
+  # Check parameters stored correctly
+  expect_equal(result$parameters$k, 4)
+  expect_equal(result$parameters$k_per_class, 15)
+  expect_equal(result$parameters$dist_method, "euclidean")
 })
 
-# ===== FUNCTIONALITY TESTS =====
+# ===== TEST 3: OUTPUT STRUCTURE =====
 
-test_that("select_sample_train_validation returns correct structure", {
-  cluster_result <- create_mock_cluster_result()
+test_that("seq_classification returns correct structure", {
+  skip_if_not_installed("seqinr")
+  skip_if_not_installed("randomForest")
+  skip_if_not_installed("xgboost")
+  skip_if_not_installed("caret")
+
+  test_id <- format(Sys.time(), "%Y%m%d_%H%M%OS3")
+  temp_dir <- file.path(tempdir(), paste0("seq_struct_", test_id))
+  on.exit(unlink(temp_dir, recursive = TRUE), add = TRUE)
+
+  create_test_fasta(temp_dir, n_seqs = 60, seq_length = 1000, n_classes = 2)
 
   result <- suppressMessages(
-    select_sample_train_validation(cluster_result, k_per_class = 2, min_size = 800)
+    seq_classification(
+      input_dir = temp_dir,
+      k = 4,
+      k_per_class = 15,
+      min_size = 500,
+      n_motifs = 30,
+      cv_folds = 3,
+      verbose = FALSE
+    )
   )
 
-  expect_s3_class(result, "sample_selection")
-  expect_true(is.list(result))
+  # Check all required list elements
+  expected_names <- c(
+    "classification_results",
+    "best_model",
+    "validation_predictions",
+    "validation_actuals",
+    "validation_accuracy",
+    "confusion_matrix",
+    "model_comparison",
+    "kmer_analysis",
+    "processing_time",
+    "parameters",
+    "timestamp"
+  )
 
-  expected_names <- c("classification_dataset", "validation_dataset",
-                      "classification_metadata", "validation_metadata",
-                      "true_labels_classification", "true_labels_validation")
-  expect_true(all(expected_names %in% names(result)))
+  for (name in expected_names) {
+    expect_true(name %in% names(result), info = paste("Missing:", name))
+  }
 
-  # Check attributes
-  expect_true(!is.null(attr(result, "n_classification")))
-  expect_true(!is.null(attr(result, "n_validation")))
-  expect_true(!is.null(attr(result, "validation_type")))
-  expect_equal(attr(result, "min_size"), 800)
-  expect_equal(attr(result, "k_per_class"), 2)
+  # Check data types
+  expect_type(result$classification_results, "list")
+  expect_type(result$best_model, "character")
+  expect_type(result$validation_accuracy, "double")
+  expect_s3_class(result$confusion_matrix, "confusionMatrix")
+  expect_s3_class(result$processing_time, "difftime")
+  expect_s3_class(result$timestamp, "POSIXct")
 })
 
-test_that("select_sample_train_validation handles min_size correctly", {
-  cluster_result <- create_mock_cluster_result()
+# ===== TEST 4: EXTERNAL VALIDATION =====
 
-  result <- suppressMessages(
-    select_sample_train_validation(cluster_result, k_per_class = 2, min_size = 800)
-  )
+test_that("seq_classification handles external validation", {
+  skip_if_not_installed("seqinr")
+  skip_if_not_installed("randomForest")
+  skip_if_not_installed("xgboost")
+  skip_if_not_installed("caret")
 
-  # All classification sequences should have length >= 800
-  expect_true(all(result$classification_metadata$length >= 800))
+  test_id <- format(Sys.time(), "%Y%m%d_%H%M%OS3")
+  train_dir <- file.path(tempdir(), paste0("seq_train_", test_id))
+  val_dir <- file.path(tempdir(), paste0("seq_val_", test_id))
 
-  # Should select up to k_per_class sequences per class
-  class_counts <- table(result$classification_metadata$class)
-  expect_true(all(class_counts <= 2))
-})
-
-test_that("select_sample_train_validation creates non-overlapping datasets", {
-  cluster_result <- create_mock_cluster_result()
-
-  result <- suppressMessages(
-    select_sample_train_validation(cluster_result, k_per_class = 1, min_size = 800)
-  )
-
-  # No sequence should appear in both datasets
-  overlap <- intersect(
-    result$classification_metadata$sequence_name,
-    result$validation_metadata$sequence_name
-  )
-  expect_equal(length(overlap), 0)
-})
-
-test_that("select_sample_train_validation handles insufficient sequences per class", {
-  cluster_result <- create_mock_cluster_result()
-
-  # Request more sequences than available (after filtering by min_size)
-  result <- suppressMessages(
-    select_sample_train_validation(cluster_result, k_per_class = 10, min_size = 800)
-  )
-
-  # Should select all available sequences per class
-  expect_true(nrow(result$classification_metadata) > 0)
-  expect_true(nrow(result$classification_metadata) < 20)  # Less than 10 per class * 2 classes
-})
-
-test_that("select_sample_train_validation print method works", {
-  cluster_result <- create_mock_cluster_result()
-
-  result <- suppressMessages(
-    select_sample_train_validation(cluster_result, k_per_class = 1, min_size = 800)
-  )
-
-  expect_output(print(result), "Sample Selection Summary")
-  expect_output(print(result), "Classification sequences")
-  expect_output(print(result), "Validation sequences")
-})
-
-test_that("select_sample_train_validation summary method works", {
-  cluster_result <- create_mock_cluster_result()
-
-  result <- suppressMessages(
-    select_sample_train_validation(cluster_result, k_per_class = 1, min_size = 800)
-  )
-
-  expect_output(summary(result), "Detailed Sample Selection Summary")
-  expect_output(summary(result), "Classification Dataset")
-  expect_output(summary(result), "Validation Dataset")
-})
-
-test_that("select_sample_train_validation saves files correctly", {
-  cluster_result <- create_mock_cluster_result()
-
-  # Create temporary directory for test files
-  old_wd <- getwd()
-  temp_test_dir <- file.path(tempdir(), paste0("test_save_", sample(1:10000, 1)))
-  dir.create(temp_test_dir, showWarnings = FALSE)
-  setwd(temp_test_dir)
   on.exit({
-    setwd(old_wd)
-    unlink(temp_test_dir, recursive = TRUE)
-  })
+    unlink(train_dir, recursive = TRUE)
+    unlink(val_dir, recursive = TRUE)
+  }, add = TRUE)
 
+  # Create training and validation data
+  create_test_fasta(train_dir, n_seqs = 60, seq_length = 1000, n_classes = 2)
+  create_test_fasta(val_dir, n_seqs = 30, seq_length = 1000, n_classes = 2)
+
+  # Run with external validation
   result <- suppressMessages(
-    select_sample_train_validation(cluster_result, k_per_class = 1, min_size = 800)
-  )
-
-  # Check that files were created
-  expect_true(file.exists("true_labels_classification.RData"))
-  expect_true(file.exists("classification_dataset.RData"))
-  expect_true(file.exists("true_labels_validation.RData"))
-  expect_true(file.exists("validation_dataset.RData"))
-  expect_true(file.exists("backup_checkpoint1.RData"))
-
-  # Verify file contents
-  load("true_labels_classification.RData")
-  expect_true(exists("true_labels_classification"))
-  expect_s3_class(true_labels_classification, "data.frame")
-})
-
-test_that("select_sample_train_validation handles empty validation set", {
-  # Create scenario where all sequences are used for classification
-  cluster_result <- list(
-    data_result = list(
-      metadata = data.frame(
-        sequence_name = c("seq1", "seq2"),
-        class = c("A", "B"),
-        length = c(900, 1000),
-        stringsAsFactors = FALSE
-      ),
-      kmers = data.frame(
-        kmer1 = c(1, 2),
-        kmer2 = c(3, 4)
-      ),
-      k = 3
+    seq_classification(
+      input_dir = train_dir,
+      k = 4,
+      k_per_class = 15,
+      min_size = 500,
+      n_motifs = 30,
+      external_validation_fasta_dir = val_dir,
+      k_for_external_validation = 4,
+      cv_folds = 3,
+      verbose = FALSE
     )
   )
-  rownames(cluster_result$data_result$kmers) <- cluster_result$data_result$metadata$sequence_name
 
-  expect_warning(
-    result <- suppressMessages(
-      select_sample_train_validation(cluster_result, k_per_class = 5, min_size = 800)
-    ),
-    "No sequences available for internal validation"
-  )
-
-  expect_equal(nrow(result$validation_metadata), 0)
-  expect_equal(nrow(result$validation_dataset), 0)
+  expect_type(result, "list")
+  expect_equal(result$parameters$external_validation_fasta_dir, val_dir)
+  expect_equal(result$parameters$k_for_external_validation, 4)
 })
-
