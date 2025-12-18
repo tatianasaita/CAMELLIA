@@ -121,7 +121,7 @@ print(motif_result)
 ``` r
 # Select the top 100 most discriminative motifs
 selected_motifs <- select_motifs(
-  motif_result = motif_result,
+  motif_cluster = motif_result,
   cluster_result = cluster_result,
   n = 100,
   verbose = TRUE
