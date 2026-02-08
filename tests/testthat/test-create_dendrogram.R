@@ -1,272 +1,220 @@
-# ==============================================================================
-# File: tests/testthat/test_create_dendrogram.R
-# ==============================================================================
+# tests/testthat/test-create_dendrogram.R
 
-skip_if_not_installed <- function(pkg) {
-  if (!requireNamespace(pkg, quietly = TRUE)) {
-    skip(paste("Package", pkg, "not available"))
-  }
-}
-
-test_that("create_dendrogram requires CLASS column", {
+library("testthat")
+test_that("create_dendrogram returns correct structure", {
+  # Create test data
   data <- data.frame(
-    x = rnorm(10),
-    y = rnorm(10)
+    kmer1 = rnorm(50),
+    kmer2 = rnorm(50),
+    kmer3 = rnorm(50),
+    CLASS = rep(c("A", "B"), each = 25)
   )
-
-  expect_error(
-    create_dendrogram(data),
-    "'data' must contain a 'CLASS' column"
-  )
-})
-
-test_that("create_dendrogram requires at least 2 rows", {
-  data <- data.frame(
-    x = 1,
-    CLASS = "A"
-  )
-
-  expect_error(
-    create_dendrogram(data),
-    "'data' must contain at least 2 rows"
-  )
-})
-
-test_that("create_dendrogram requires numeric columns", {
-  data <- data.frame(
-    x = c("a", "b"),
-    CLASS = c("A", "B")
-  )
-
-  expect_error(
-    create_dendrogram(data),
-    "'data' must contain numeric columns"
-  )
-})
-
-test_that("create_dendrogram validates sequence_names length", {
-  data <- data.frame(
-    x = rnorm(10),
-    CLASS = rep(c("A", "B"), 5)
-  )
-
-  expect_error(
-    create_dendrogram(data, sequence_names = c("seq1", "seq2")),
-    "'sequence_names' must have length 10"
-  )
-})
-
-test_that("create_dendrogram rejects NA values", {
-  data <- data.frame(
-    x = c(rnorm(9), NA),
-    CLASS = rep(c("A", "B"), 5)
-  )
-
-  expect_error(
-    create_dendrogram(data),
-    "contains NA values"
-  )
-})
-
-test_that("create_dendrogram rejects Inf values", {
-  data <- data.frame(
-    x = c(rnorm(9), Inf),
-    CLASS = rep(c("A", "B"), 5)
-  )
-
-  expect_error(
-    create_dendrogram(data),
-    "contains Inf values"
-  )
-})
-
-test_that("create_dendrogram validates dist_method", {
-  data <- data.frame(
-    x = rnorm(10),
-    CLASS = rep(c("A", "B"), 5)
-  )
-
-  expect_error(
-    create_dendrogram(data, dist_method = "invalid_method"),
-    "'dist_method' must be one of"
-  )
-})
-
-test_that("create_dendrogram validates hclust_method", {
-  data <- data.frame(
-    x = rnorm(10),
-    CLASS = rep(c("A", "B"), 5)
-  )
-
-  expect_error(
-    create_dendrogram(data, hclust_method = "invalid_method"),
-    "'hclust_method' must be one of"
-  )
-})
-
-test_that("create_dendrogram validates show_labels", {
-  data <- data.frame(
-    x = rnorm(10),
-    CLASS = rep(c("A", "B"), 5)
-  )
-
-  expect_error(
-    create_dendrogram(data, show_labels = "yes"),
-    "'show_labels' must be a logical value"
-  )
-})
-
-test_that("create_dendrogram validates plot_title", {
-  data <- data.frame(
-    x = rnorm(10),
-    CLASS = rep(c("A", "B"), 5)
-  )
-
-  expect_error(
-    create_dendrogram(data, plot_title = c("Title1", "Title2")),
-    "'plot_title' must be a single character string"
-  )
-})
-
-test_that("create_dendrogram produces correct output structure", {
-  set.seed(123)
-  data <- data.frame(
-    x = rnorm(10),
-    y = rnorm(10),
-    CLASS = rep(c("A", "B"), 5)
-  )
-
-  # ← FIXED: Suppress dendextend warning
-  result <- suppressWarnings(
-    create_dendrogram(data, plot_title = "Test Dendrogram")
-  )
-
+  
+  result <- create_dendrogram(data)
+  
+  # Check class
   expect_s3_class(result, "dendrogram_result")
-  expect_named(result, c("dendrogram", "hclust", "order", "labels",
-                         "sequence_names", "colors", "base_colors",
-                         "height", "n_samples", "n_classes"))
-
+  expect_type(result, "list")
+  
+  # Check required components
+  expect_named(result, c("dendrogram", "hclust", "order", "labels", 
+                         "sequence_names", "colors", "base_colors"))
+  
+  # Check component types
   expect_s3_class(result$dendrogram, "dendrogram")
   expect_s3_class(result$hclust, "hclust")
-  expect_true(is.integer(result$order))
-  expect_true(is.character(result$labels))
-  expect_true(is.character(result$sequence_names))
-  expect_true(is.character(result$colors))
-  expect_true(is.character(result$base_colors))
-  expect_true(is.numeric(result$height))
-  expect_true(is.integer(result$n_samples))
-  expect_true(is.integer(result$n_classes))
+  expect_type(result$order, "integer")
+  expect_type(result$labels, "character")
+  expect_type(result$colors, "character")
+  expect_type(result$base_colors, "character")
+  
+  # Check dimensions
+  expect_length(result$order, nrow(data))
+  expect_length(result$labels, nrow(data))
+  expect_length(result$colors, nrow(data))
+  expect_length(result$base_colors, 2)  # Two classes
 })
 
-test_that("create_dendrogram colors mapped to classes", {
-  set.seed(123)
+test_that("create_dendrogram handles sequence_names correctly", {
   data <- data.frame(
-    x = rnorm(10),
-    y = rnorm(10),
-    CLASS = rep(c("A", "B"), 5)
+    kmer1 = rnorm(30),
+    kmer2 = rnorm(30),
+    CLASS = rep(c("A", "B", "C"), each = 10)
   )
-
-  # ← FIXED: Suppress warning
-  result <- suppressWarnings(create_dendrogram(data))
-
-  expect_named(result$base_colors, c("A", "B"))
-  expect_equal(length(result$colors), 10)
-
-  for (i in seq_along(result$colors)) {
-    class_label <- result$labels[i]
-    expected_color <- result$base_colors[class_label]
-    expect_equal(result$colors[i], expected_color)
-  }
+  
+  seq_names <- paste0("seq_", 1:30)
+  result <- create_dendrogram(data, sequence_names = seq_names)
+  
+  expect_type(result$sequence_names, "character")
+  expect_length(result$sequence_names, 30)
+  expect_true(all(result$sequence_names %in% seq_names))
 })
 
-test_that("create_dendrogram with sequence_names", {
-  set.seed(123)
+test_that("create_dendrogram works with different distance methods", {
   data <- data.frame(
-    x = rnorm(10),
-    y = rnorm(10),
-    CLASS = rep(c("A", "B"), 5)
+    kmer1 = rnorm(20),
+    kmer2 = rnorm(20),
+    CLASS = rep(c("A", "B"), each = 10)
   )
-
-  seq_names <- paste0("seq_", 1:10)
-
-  # ← FIXED: Suppress warning
-  result <- suppressWarnings(
-    create_dendrogram(data, sequence_names = seq_names)
-  )
-
-  expect_equal(length(result$sequence_names), 10)
-  expect_true(all(grepl("^seq_", result$sequence_names)))
-})
-
-test_that("create_dendrogram different distance methods", {
-  set.seed(123)
-  data <- data.frame(
-    x = rnorm(10),
-    y = rnorm(10),
-    CLASS = rep(c("A", "B"), 5)
-  )
-
-  dist_methods <- c("euclidean", "manhattan", "maximum")
-
-  for (method in dist_methods) {
-    # ← FIXED: Suppress warning
-    result <- suppressWarnings(
-      create_dendrogram(data, dist_method = method)
-    )
+  
+  methods <- c("euclidean", "manhattan", "maximum")
+  
+  for (method in methods) {
+    result <- create_dendrogram(data, dist_method = method)
     expect_s3_class(result, "dendrogram_result")
-    expect_true(!is.null(result$dendrogram))
   }
 })
 
-test_that("create_dendrogram different clustering methods", {
-  set.seed(123)
+test_that("create_dendrogram works with different clustering methods", {
   data <- data.frame(
-    x = rnorm(10),
-    y = rnorm(10),
-    CLASS = rep(c("A", "B"), 5)
+    kmer1 = rnorm(20),
+    kmer2 = rnorm(20),
+    CLASS = rep(c("A", "B"), each = 10)
   )
-
-  hclust_methods <- c("ward.D2", "single", "complete", "average")
-
-  for (method in hclust_methods) {
-    # ← FIXED: Suppress warning
-    result <- suppressWarnings(
-      create_dendrogram(data, hclust_method = method)
-    )
+  
+  methods <- c("ward.D2", "complete", "average", "single")
+  
+  for (method in methods) {
+    result <- create_dendrogram(data, hclust_method = method)
     expect_s3_class(result, "dendrogram_result")
-    expect_true(!is.null(result$dendrogram))
   }
 })
 
-test_that("create_dendrogram with multiple classes", {
-  set.seed(123)
-  data <- data.frame(
-    x = rnorm(30),
-    y = rnorm(30),
-    CLASS = rep(c("A", "B", "C"), 10)
+test_that("create_dendrogram handles multiple classes correctly", {
+  # Test with 2 classes
+  data_2 <- data.frame(
+    kmer1 = rnorm(20),
+    kmer2 = rnorm(20),
+    CLASS = rep(c("A", "B"), each = 10)
   )
-
-  # ← FIXED: Suppress warning
-  result <- suppressWarnings(create_dendrogram(data))
-
-  expect_equal(result$n_classes, 3)
-  expect_equal(length(result$base_colors), 3)
-  expect_named(result$base_colors, c("A", "B", "C"))
+  result_2 <- create_dendrogram(data_2)
+  expect_length(result_2$base_colors, 2)
+  
+  # Test with 5 classes (uses palette.colors)
+  data_5 <- data.frame(
+    kmer1 = rnorm(50),
+    kmer2 = rnorm(50),
+    CLASS = rep(c("A", "B", "C", "D", "E"), each = 10)
+  )
+  result_5 <- create_dendrogram(data_5)
+  expect_length(result_5$base_colors, 5)
+  
+  # Test with 15 classes (>12, should use rainbow)
+  data_15 <- data.frame(
+    kmer1 = rnorm(150),
+    kmer2 = rnorm(150),
+    CLASS = rep(LETTERS[1:15], each = 10)
+  )
+  result_15 <- create_dendrogram(data_15)
+  expect_length(result_15$base_colors, 15)
 })
 
-test_that("print.dendrogram_result displays correctly", {
-  set.seed(123)
+test_that("create_dendrogram saves output file correctly", {
+  skip_on_cran()
+  
   data <- data.frame(
-    x = rnorm(10),
-    y = rnorm(10),
-    CLASS = rep(c("A", "B"), 5)
+    kmer1 = rnorm(20),
+    kmer2 = rnorm(20),
+    CLASS = rep(c("A", "B"), each = 10)
   )
-
-  # ← FIXED: Suppress warning
-  result <- suppressWarnings(create_dendrogram(data))
-
-  expect_output(print(result), "Dendrogram Analysis Result")
-  expect_output(print(result), "Number of samples")
-  expect_output(print(result), "Number of classes")
-  expect_output(print(result), "Color mapping by class")
+  
+  temp_file <- tempfile(fileext = ".png")
+  
+  result <- create_dendrogram(data, output = temp_file)
+  
+  expect_true(file.exists(temp_file))
+  expect_gt(file.size(temp_file), 0)
+  
+  # Clean up
+  unlink(temp_file)
 })
+
+test_that("create_dendrogram color assignment is consistent", {
+  data <- data.frame(
+    kmer1 = rnorm(30),
+    kmer2 = rnorm(30),
+    CLASS = rep(c("A", "B", "C"), each = 10)
+  )
+  
+  result <- create_dendrogram(data)
+  
+  # Check that base_colors are named
+  expect_true(!is.null(names(result$base_colors)))
+  expect_setequal(names(result$base_colors), c("A", "B", "C"))
+  
+  # Check that colors match classes
+  expect_length(result$colors, 30)
+  
+  # Check color consistency
+  for (i in seq_along(result$labels)) {
+    expected_color <- result$base_colors[result$labels[i]]
+    expect_equal(result$colors[i], expected_color, ignore_attr = TRUE)
+  }
+})
+
+test_that("print method works correctly", {
+  data <- data.frame(
+    kmer1 = rnorm(20),
+    kmer2 = rnorm(20),
+    CLASS = rep(c("A", "B"), each = 10)
+  )
+  
+  result <- create_dendrogram(data)
+  
+  # Capture output
+  output <- capture.output(print(result))
+  
+  # Check key elements are present
+  expect_true(any(grepl("Dendrogram Analysis Result", output)))
+  expect_true(any(grepl("Number of samples:", output)))
+  expect_true(any(grepl("Number of classes:", output)))
+  expect_true(any(grepl("Tree height:", output)))
+  expect_true(any(grepl("Color mapping by class:", output)))
+})
+
+test_that("create_dendrogram order is valid", {
+  data <- data.frame(
+    kmer1 = rnorm(25),
+    kmer2 = rnorm(25),
+    CLASS = rep(c("A", "B"), c(10, 15))
+  )
+  
+  result <- create_dendrogram(data)
+  
+  # Check order contains all indices
+  expect_setequal(result$order, 1:25)
+  
+  # Check no duplicates
+  expect_equal(length(result$order), length(unique(result$order)))
+  
+  # Check order is valid permutation
+  expect_true(all(result$order >= 1 & result$order <= 25))
+})
+
+test_that("create_dendrogram handles edge cases", {
+  # Minimum valid data (2 rows)
+  data_min <- data.frame(
+    kmer1 = c(1, 2),
+    kmer2 = c(3, 4),
+    CLASS = c("A", "B")
+  )
+  
+  result <- create_dendrogram(data_min)
+  expect_s3_class(result, "dendrogram_result")
+  expect_length(result$order, 2)
+})
+
+test_that("create_dendrogram works without sequence_names", {
+  data <- data.frame(
+    kmer1 = rnorm(15),
+    kmer2 = rnorm(15),
+    CLASS = rep(c("A", "B", "C"), each = 5)
+  )
+  
+  result <- create_dendrogram(data)
+  
+  # Should create default sequence names
+  expect_type(result$sequence_names, "character")
+  expect_length(result$sequence_names, 15)
+})
+

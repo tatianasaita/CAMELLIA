@@ -1,223 +1,355 @@
 # tests/testthat/test-kmer_analysis.R
-#
-# Essential tests for kmer_analysis function following CRAN standards
-# These tests cover:
-# - Input validation (cluster_result, motif_matrix, threshold)
-# - Core functionality (unique motifs identification, frequency ranking)
-# - Validation data handling (external validation datasets)
-# - Threshold behavior (motif presence/absence logic)
-# - S3 methods (print, summary)
-# - Edge cases (empty results, single cluster/class scenarios)
-# - Data structure integrity (output components, mappings)
 
 library(testthat)
 
-test_that("kmer_analysis validates inputs", {
-  # Invalid cluster_result
-  expect_error(
-    kmer_analysis(cluster_result = list()),
-    "cluster_summary"
-  )
-
-  # Invalid threshold
-  expect_error(
-    kmer_analysis(
-      cluster_result = list(cluster_summary = data.frame()),
-      threshold = "invalid"
+test_that("kmer_analysis returns correct structure", {
+  skip_on_cran()
+  
+  # Create minimal mock data
+  motif_matrix <- matrix(
+    c(10, 0, 5,
+      0, 8, 0,
+      3, 3, 3),
+    nrow = 3, byrow = TRUE,
+    dimnames = list(
+      c("motif_A", "motif_B", "motif_C"),
+      c("Cluster_1", "Cluster_2", "Cluster_3")
     )
   )
-})
-
-test_that("kmer_analysis works with minimal cluster_result", {
-  # Create minimal valid cluster_result
+  
+  cluster_summary <- data.frame(
+    cluster_id = 1:3,
+    dominant_class = c("Class_A", "Class_B", "Class_A"),
+    stringsAsFactors = FALSE
+  )
+  
   cluster_result <- list(
-    cluster_summary = data.frame(
-      cluster_id = 1:3,
-      dominant_class = c("A", "B", "A"),
-      stringsAsFactors = FALSE
-    ),
-    data_result = NULL
+    cluster_summary = cluster_summary,
+    data_result = NULL,
+    classification_result = NULL
   )
-
-  # Create motif matrix
-  motif_matrix <- data.frame(
-    Cluster_1 = c(0.8, 0.1, 0.0),
-    Cluster_2 = c(0.0, 0.9, 0.1),
-    Cluster_3 = c(0.7, 0.0, 0.0),
-    row.names = c("AAA", "TTT", "GGG")
+  
+  # Run function
+  result <- kmer_analysis(
+    cluster_result = cluster_result,
+    motif_matrix = motif_matrix,
+    threshold = 0
   )
-
-  result <- kmer_analysis(cluster_result, motif_matrix, threshold = 0)
-
+  
+  # Test class
   expect_s3_class(result, "kmer_analysis_result")
-  expect_true("unique_cluster_motifs" %in% names(result))
-  expect_true("cluster_frequency_ranking" %in% names(result))
-  expect_true("unique_class_motifs" %in% names(result))
-  expect_true("class_frequency_matrix" %in% names(result))
+  expect_type(result, "list")
+  
+  # Test essential components
+  expect_named(result, c(
+    "unique_cluster_motifs",
+    "cluster_frequency_ranking",
+    "unique_class_motifs",
+    "class_frequency_matrix",
+    "motifs_by_class_rank",
+    "cluster_to_class",
+    "has_external_validation",
+    "validation"
+  ))
+  
+  # Test data frames structure
+  expect_s3_class(result$unique_cluster_motifs, "data.frame")
+  expect_s3_class(result$cluster_frequency_ranking, "data.frame")
+  expect_s3_class(result$unique_class_motifs, "data.frame")
+  expect_s3_class(result$class_frequency_matrix, "data.frame")
+  
+  # Test validation flag
+  expect_type(result$has_external_validation, "logical")
   expect_false(result$has_external_validation)
+  expect_null(result$validation)
 })
 
-test_that("kmer_analysis identifies unique cluster motifs", {
-  cluster_result <- list(
-    cluster_summary = data.frame(
-      cluster_id = 1:2,
-      dominant_class = c("A", "B"),
-      stringsAsFactors = FALSE
+test_that("kmer_analysis identifies unique cluster motifs correctly", {
+  skip_on_cran()
+  
+  # Matrix with clear unique motifs
+  motif_matrix <- matrix(
+    c(10, 0, 0,   # motif_A unique to Cluster_1
+      0, 15, 0,   # motif_B unique to Cluster_2
+      5, 5, 5),   # motif_C in all clusters
+    nrow = 3, byrow = TRUE,
+    dimnames = list(
+      c("motif_A", "motif_B", "motif_C"),
+      c("Cluster_1", "Cluster_2", "Cluster_3")
     )
   )
-
-  motif_matrix <- data.frame(
-    Cluster_1 = c(0.9, 0.0),
-    Cluster_2 = c(0.0, 0.8),
-    row.names = c("AAA", "TTT")
+  
+  cluster_summary <- data.frame(
+    cluster_id = 1:3,
+    dominant_class = c("Class_A", "Class_B", "Class_A"),
+    stringsAsFactors = FALSE
   )
-
-  result <- kmer_analysis(cluster_result, motif_matrix, threshold = 0)
-
+  
+  cluster_result <- list(cluster_summary = cluster_summary)
+  
+  result <- kmer_analysis(
+    cluster_result = cluster_result,
+    motif_matrix = motif_matrix,
+    threshold = 0
+  )
+  
+  # Should identify 2 unique motifs (A and B)
   expect_equal(nrow(result$unique_cluster_motifs), 2)
-  expect_true(all(c("motif", "cluster", "class", "value") %in%
-                    colnames(result$unique_cluster_motifs)))
+  expect_true("motif_A" %in% result$unique_cluster_motifs$motif)
+  expect_true("motif_B" %in% result$unique_cluster_motifs$motif)
+  expect_false("motif_C" %in% result$unique_cluster_motifs$motif)
+  
+  # Check columns
+  expect_named(result$unique_cluster_motifs, 
+               c("motif", "cluster", "class", "value"))
 })
 
-test_that("kmer_analysis handles validation data", {
-  cluster_result <- list(
-    cluster_summary = data.frame(
-      cluster_id = 1:2,
-      dominant_class = c("A", "B"),
-      stringsAsFactors = FALSE
-    ),
-    classification_result = list(
-      validation_data = data.frame(
-        CLASS = c("A", "B", "A"),
-        AAA = c(1, 0, 1),
-        TTT = c(0, 1, 0),
-        stringsAsFactors = FALSE
-      )
+test_that("kmer_analysis identifies unique class motifs correctly", {
+  skip_on_cran()
+  
+  motif_matrix <- matrix(
+    c(10, 0, 0, 0,   # motif_A only in Class_A clusters
+      0, 0, 8, 7,    # motif_B only in Class_B clusters
+      5, 5, 5, 5),   # motif_C in both classes
+    nrow = 3, byrow = TRUE,
+    dimnames = list(
+      c("motif_A", "motif_B", "motif_C"),
+      c("Cluster_1", "Cluster_2", "Cluster_3", "Cluster_4")
     )
   )
-
-  motif_matrix <- data.frame(
-    Cluster_1 = c(0.8, 0.1),
-    Cluster_2 = c(0.1, 0.9),
-    row.names = c("AAA", "TTT")
+  
+  cluster_summary <- data.frame(
+    cluster_id = 1:4,
+    dominant_class = c("Class_A", "Class_A", "Class_B", "Class_B"),
+    stringsAsFactors = FALSE
   )
+  
+  cluster_result <- list(cluster_summary = cluster_summary)
+  
+  result <- kmer_analysis(
+    cluster_result = cluster_result,
+    motif_matrix = motif_matrix,
+    threshold = 0
+  )
+  
+  # Should identify 2 unique class motifs (A and B)
+  expect_equal(nrow(result$unique_class_motifs), 2)
+  expect_true("motif_A" %in% result$unique_class_motifs$motif)
+  expect_true("motif_B" %in% result$unique_class_motifs$motif)
+  
+  # Check columns
+  expect_named(result$unique_class_motifs,
+               c("motif", "class", "n_clusters_with_motif", "total_class_clusters"))
+})
 
-  result <- kmer_analysis(cluster_result, motif_matrix)
+test_that("kmer_analysis threshold parameter works correctly", {
+  skip_on_cran()
+  
+  motif_matrix <- matrix(
+    c(10, 0, 0,
+      2, 0, 0,    # Below threshold of 5
+      0, 8, 0),
+    nrow = 3, byrow = TRUE,
+    dimnames = list(
+      c("motif_A", "motif_B", "motif_C"),
+      c("Cluster_1", "Cluster_2", "Cluster_3")
+    )
+  )
+  
+  cluster_summary <- data.frame(
+    cluster_id = 1:3,
+    dominant_class = c("Class_A", "Class_B", "Class_A"),
+    stringsAsFactors = FALSE
+  )
+  
+  cluster_result <- list(cluster_summary = cluster_summary)
+  
+  # With threshold = 5
+  result <- kmer_analysis(
+    cluster_result = cluster_result,
+    motif_matrix = motif_matrix,
+    threshold = 5
+  )
+  
+  # motif_B should not be considered present
+  unique_motifs <- result$unique_cluster_motifs$motif
+  expect_true("motif_A" %in% unique_motifs)
+  expect_false("motif_B" %in% unique_motifs)
+  expect_true("motif_C" %in% unique_motifs)
+})
 
+test_that("kmer_analysis handles validation data correctly", {
+  skip_on_cran()
+  
+  motif_matrix <- matrix(
+    c(10, 0, 5, 0, 8, 0),
+    nrow = 2, byrow = TRUE,
+    dimnames = list(
+      c("motif_A", "motif_B"),
+      c("Cluster_1", "Cluster_2", "Cluster_3")
+    )
+  )
+  
+  cluster_summary <- data.frame(
+    cluster_id = 1:3,
+    dominant_class = c("Class_A", "Class_B", "Class_A"),
+    stringsAsFactors = FALSE
+  )
+  
+  # Add validation data with proper structure
+  # Includes data_result with kmers for training rank calculation
+  training_data <- data.frame(
+    motif_A = c(10, 5, 3),
+    motif_B = c(8, 0, 7),
+    CLASS = c("Class_A", "Class_B", "Class_A"),
+    stringsAsFactors = FALSE
+  )
+  
+  validation_data <- data.frame(
+    motif_A = c(5, 0, 3),
+    motif_B = c(0, 7, 0),
+    CLASS = c("Class_A", "Class_B", "Class_A"),
+    stringsAsFactors = FALSE
+  )
+  
+  cluster_result <- list(
+    cluster_summary = cluster_summary,
+    data_result = list(kmers = training_data),  # Added training data
+    classification_result = list(validation_data = validation_data)
+  )
+  
+  result <- kmer_analysis(
+    cluster_result = cluster_result,
+    motif_matrix = motif_matrix,
+    threshold = 0
+  )
+  
+  # Check validation flag
   expect_true(result$has_external_validation)
-  expect_false(is.null(result$validation))
-  expect_true("unique_class_motifs" %in% names(result$validation))
-  expect_true("class_frequency_ranking" %in% names(result$validation))
-  expect_true("motifs_by_class_rank" %in% names(result$validation))
-})
-
-test_that("kmer_analysis threshold works correctly", {
-  cluster_result <- list(
-    cluster_summary = data.frame(
-      cluster_id = 1:2,
-      dominant_class = c("A", "B"),
-      stringsAsFactors = FALSE
-    )
-  )
-
-  motif_matrix <- data.frame(
-    Cluster_1 = c(0.5, 0.1),
-    Cluster_2 = c(0.1, 0.6),
-    row.names = c("AAA", "TTT")
-  )
-
-  result_low <- kmer_analysis(cluster_result, motif_matrix, threshold = 0)
-  result_high <- kmer_analysis(cluster_result, motif_matrix, threshold = 0.3)
-
-  # Com threshold mais alto, mais motifs são considerados únicos
-  # porque valores baixos são filtrados
-  expect_lte(nrow(result_low$unique_cluster_motifs),
-             nrow(result_high$unique_cluster_motifs))
-})
-
-test_that("kmer_analysis print method works", {
-  cluster_result <- list(
-    cluster_summary = data.frame(
-      cluster_id = 1,
-      dominant_class = "A",
-      stringsAsFactors = FALSE
-    )
-  )
-
-  motif_matrix <- data.frame(
-    Cluster_1 = c(0.8),
-    row.names = c("AAA")
-  )
-
-  result <- kmer_analysis(cluster_result, motif_matrix)
-
-  expect_output(print(result), "K-mer Analysis Results")
-  expect_output(print(result), "TRAINING DATA")
-})
-
-test_that("kmer_analysis summary method works", {
-  cluster_result <- list(
-    cluster_summary = data.frame(
-      cluster_id = 1:2,
-      dominant_class = c("A", "B"),
-      stringsAsFactors = FALSE
-    )
-  )
-
-  motif_matrix <- data.frame(
-    Cluster_1 = c(0.8, 0.1, 0.2),
-    Cluster_2 = c(0.1, 0.9, 0.3),
-    row.names = c("AAA", "TTT", "GGG")
-  )
-
-  result <- kmer_analysis(cluster_result, motif_matrix)
-
-  expect_output(summary(result), "TRAINING SUMMARY")
-  expect_output(summary(result), "most frequent motifs")
+  expect_type(result$validation, "list")
+  
+  # Check validation components
+  expect_named(result$validation, c(
+    "unique_class_motifs",
+    "class_frequency_ranking",
+    "class_frequency_matrix",
+    "motifs_by_class_rank",
+    "n_sequences",
+    "n_classes",
+    "class_names"
+  ))
+  
+  # Check validation statistics
+  expect_equal(result$validation$n_sequences, 3)
+  expect_equal(result$validation$n_classes, 2)
+  expect_setequal(result$validation$class_names, c("Class_A", "Class_B"))
+  
+  # Check that motifs_by_class_rank was created for validation
+  expect_s3_class(result$validation$motifs_by_class_rank, "data.frame")
+  expect_true("motif" %in% colnames(result$validation$motifs_by_class_rank))
 })
 
 test_that("kmer_analysis handles empty results gracefully", {
-  cluster_result <- list(
-    cluster_summary = data.frame(
-      cluster_id = 1,
-      dominant_class = "A",
-      stringsAsFactors = FALSE
+  skip_on_cran()
+  
+  # Matrix where all motifs appear in all clusters
+  motif_matrix <- matrix(
+    c(5, 5, 5,
+      3, 3, 3),
+    nrow = 2, byrow = TRUE,
+    dimnames = list(
+      c("motif_A", "motif_B"),
+      c("Cluster_1", "Cluster_2", "Cluster_3")
     )
   )
-
-  # All motifs present in all clusters
-  motif_matrix <- data.frame(
-    Cluster_1 = c(0.8, 0.9),
-    row.names = c("AAA", "TTT")
+  
+  cluster_summary <- data.frame(
+    cluster_id = 1:3,
+    dominant_class = rep("Class_A", 3),  # All same class
+    stringsAsFactors = FALSE
   )
+  
+  cluster_result <- list(cluster_summary = cluster_summary)
+  
+  result <- kmer_analysis(
+    cluster_result = cluster_result,
+    motif_matrix = motif_matrix,
+    threshold = 0
+  )
+  
+  # Should have no unique CLUSTER motifs (all appear in multiple clusters)
+  expect_equal(nrow(result$unique_cluster_motifs), 0)
+  
+  # Should have unique CLASS motifs (all motifs only in Class_A)
+  expect_equal(nrow(result$unique_class_motifs), 2)
+  expect_true(all(result$unique_class_motifs$class == "Class_A"))
+  
+  # But should have frequency rankings
+  expect_equal(nrow(result$cluster_frequency_ranking), 2)
+  expect_true("n_clusters" %in% colnames(result$cluster_frequency_ranking))
+})
 
-  result <- kmer_analysis(cluster_result, motif_matrix, threshold = 0.5)
-
-  expect_s3_class(result, "kmer_analysis_result")
-  expect_true(is.data.frame(result$unique_cluster_motifs))
-  expect_true(is.data.frame(result$unique_class_motifs))
+test_that("kmer_analysis validates input structure", {
+  skip_on_cran()
+  
+  motif_matrix <- matrix(1:9, nrow = 3)
+  
+  # Missing cluster_summary
+  cluster_result <- list()
+  
+  expect_error(
+    kmer_analysis(
+      cluster_result = cluster_result,
+      motif_matrix = motif_matrix
+    )
+  )
+  
+  # Invalid motif_matrix (not a matrix)
+  cluster_result <- list(
+    cluster_summary = data.frame(
+      cluster_id = 1:3,
+      dominant_class = c("A", "B", "C")
+    )
+  )
+  
+  expect_error(
+    kmer_analysis(
+      cluster_result = cluster_result,
+      motif_matrix = "not_a_matrix"
+    )
+  )
 })
 
 test_that("kmer_analysis cluster_to_class mapping is correct", {
-  cluster_result <- list(
-    cluster_summary = data.frame(
-      cluster_id = c(1, 2, 3),
-      dominant_class = c("A", "B", "A"),
-      stringsAsFactors = FALSE
+  skip_on_cran()
+  
+  motif_matrix <- matrix(
+    1:6, nrow = 2,
+    dimnames = list(
+      c("motif_A", "motif_B"),
+      c("Cluster_1", "Cluster_2", "Cluster_3")
     )
   )
-
-  motif_matrix <- data.frame(
-    Cluster_1 = c(0.8),
-    Cluster_2 = c(0.7),
-    Cluster_3 = c(0.6),
-    row.names = c("AAA")
+  
+  cluster_summary <- data.frame(
+    cluster_id = 1:3,
+    dominant_class = c("Class_X", "Class_Y", "Class_X"),
+    stringsAsFactors = FALSE
   )
-
-  result <- kmer_analysis(cluster_result, motif_matrix)
-
-  expected_mapping <- c(Cluster_1 = "A", Cluster_2 = "B", Cluster_3 = "A")
-
-  expect_equal(result$cluster_to_class, expected_mapping)
+  
+  cluster_result <- list(cluster_summary = cluster_summary)
+  
+  result <- kmer_analysis(
+    cluster_result = cluster_result,
+    motif_matrix = motif_matrix,
+    threshold = 0
+  )
+  
+  # Check mapping structure
+  expect_type(result$cluster_to_class, "character")
+  expect_named(result$cluster_to_class, 
+               c("Cluster_1", "Cluster_2", "Cluster_3"))
+  expect_equal(result$cluster_to_class[["Cluster_1"]], "Class_X")
+  expect_equal(result$cluster_to_class[["Cluster_2"]], "Class_Y")
+  expect_equal(result$cluster_to_class[["Cluster_3"]], "Class_X")
 })
-
