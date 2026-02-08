@@ -5,9 +5,9 @@
 #'
 #' @param input_dir Character. Path to directory containing FASTA files for classification.
 #' @param k Integer. K-mer size for sequence analysis. Default: 6.
-#' @param dist_method Character. Distance method for clustering. Default: "euclidean".
+#' @param dist_method A character string specifying the distance method (default: "euclidean"). See method options in \code{\link[parallelDist]{parDist}}.
 #' @param hom_thresh Numeric. Homogeneity threshold for cluster validation (0-1). Default: 0.8.
-#' @param k_per_class Integer. Number of sequences to select per class for classification. Default: 3.
+#' @param seq_per_class Integer. Number of sequences to select per class for classification. Default: 3.
 #' @param min_size Integer. Minimum sequence length. Default: 800.
 #' @param n_motifs Integer. Number of top motifs to select per class. Default: 256.
 #' @param prop_train Numeric. Proportion of data for training (0-1). Default: 0.7.
@@ -18,120 +18,77 @@
 #' @param k_for_external_validation Integer. K-mer size for external validation. Default: 6L.
 #' @param verbose Logical. If TRUE, shows intermediate results and messages. Default: TRUE.
 #'
-#' @return A list containing classification results, performance metrics, and intermediate outputs
+#' @return A list of class "seq_classification" containing:
+#' \itemize{
+#'   \item \code{classification_results}: Model training and validation results
+#'   \item \code{best_model}: Name of best performing model
+#'   \item \code{validation_predictions}: Predictions on validation set
+#'   \item \code{validation_accuracy}: Accuracy on validation set
+#'   \item \code{confusion_matrix}: Confusion matrix for best model
+#'   \item \code{kmer_analysis}: K-mer analysis results
+#'   \item \code{processing_time}: Total pipeline execution time
+#'   \item \code{parameters}: List of all input parameters
+#' }
+#'
+#' #' @details
+#' This function executes a complete 8-step pipeline:
+#' \enumerate{
+#'   \item K-mer counting and data creation
+#'   \item Hierarchical clustering dendrogram
+#'   \item Cluster validation and homogeneity assessment
+#'   \item Cluster motif calculation
+#'   \item Top discriminative motif selection
+#'   \item Train/validation dataset preparation
+#'   \item Model training (Random Forest and XGBoost)
+#'   \item K-mer analysis for cluster and class-specific motifs
+#' }
+#'
+#'@note
+#'
+#' @examples
+#' \dontrun{
+#' # Basic usage with internal validation
+#' result_seq_classification <- seq_classification(
+#'   input_dir = "path/to/fasta_files",
+#'   k = 6,
+#'   seq_per_class = 200,
+#'   min_size = 800
+#'  )
+#' }
+#'
+setwd("E:/TATIANA/CAMELLIA-main/R")
+source("create_data.R")
+source("create_dendrogram.R")
+source("cluster_dendrogram.R")
+source("calculate_cluster_motifs.R")
+source("select_motifs.R")
+source("select_sample_train_validation.R")
+source("train_models_rf_xgboost.R")
+source("kmer_analysis.R")
+source("internal-functions.R")
+source("methods.R")
+
 #' @export
 seq_classification <- function(input_dir,
                                k = 6,
                                dist_method = "euclidean",
                                hom_thresh = 0.8,
-                               k_per_class = 3,
-                               min_size = 800,
                                n_motifs = 256,
+                               seq_per_class = 200,
+                               min_size = 800,
                                prop_train = 0.7,
                                cv_folds = 10,
-                               kmer_analysis_threshold = 0.8,
                                external_validation_fasta_dir = NULL,
                                k_for_external_validation = 6L,
+                               kmer_analysis_threshold = 0.8,
                                verbose = TRUE) {
 
-  # Start timer
+# Start timer
   start_time <- Sys.time()
 
-  # ===== PARAMETER VALIDATION =====
-
-  # Validate hom_thresh
-  if (!is.numeric(hom_thresh) || length(hom_thresh) != 1 ||
-      is.na(hom_thresh) || hom_thresh < 0 || hom_thresh > 1) {
-    stop("'hom_thresh' must be a numeric value between 0 and 1", call. = FALSE)
-  }
-
-  # Validate k
-  if (!is.numeric(k) || length(k) != 1 || is.na(k) ||
-      k <= 0 || k != as.integer(k)) {
-    stop("'k' must be a single positive integer", call. = FALSE)
-  }
-
-  # Validate k_per_class
-  if (!is.numeric(k_per_class) || length(k_per_class) != 1 ||
-      is.na(k_per_class) || k_per_class <= 0 ||
-      k_per_class != as.integer(k_per_class)) {
-    stop("'k_per_class' must be a single positive integer", call. = FALSE)
-  }
-
-  # Validate min_size
-  if (!is.numeric(min_size) || length(min_size) != 1 ||
-      is.na(min_size) || min_size <= 0 ||
-      min_size != as.integer(min_size)) {
-    stop("'min_size' must be a single positive integer", call. = FALSE)
-  }
-
-  # Validate n_motifs
-  if (!is.numeric(n_motifs) || length(n_motifs) != 1 ||
-      is.na(n_motifs) || n_motifs <= 0 ||
-      n_motifs != as.integer(n_motifs)) {
-    stop("'n_motifs' must be a single positive integer", call. = FALSE)
-  }
-
-  # Validate prop_train
-  if (!is.numeric(prop_train) || length(prop_train) != 1 ||
-      is.na(prop_train) || prop_train <= 0 || prop_train >= 1) {
-    stop("'prop_train' must be a numeric value between 0 and 1", call. = FALSE)
-  }
-
-  # Validate cv_folds
-  if (!is.numeric(cv_folds) || length(cv_folds) != 1 ||
-      is.na(cv_folds) || cv_folds <= 0 ||
-      cv_folds != as.integer(cv_folds)) {
-    stop("'cv_folds' must be a single positive integer", call. = FALSE)
-  }
-
-  # Validate kmer_analysis_threshold
-  if (!is.numeric(kmer_analysis_threshold) || length(kmer_analysis_threshold) != 1 ||
-      is.na(kmer_analysis_threshold) || kmer_analysis_threshold < 0 ||
-      kmer_analysis_threshold > 1) {
-    stop("'kmer_analysis_threshold' must be a numeric value between 0 and 1", call. = FALSE)
-  }
-
-  # Validate dist_method
-  if (!is.character(dist_method) || length(dist_method) != 1) {
-    stop("'dist_method' must be a single character string", call. = FALSE)
-  }
-
-  valid_methods <- c("euclidean", "maximum", "manhattan", "canberra",
-                     "binary", "minkowski")
-  if (!dist_method %in% valid_methods) {
-    stop("'dist_method' must be one of: ",
-         paste(valid_methods, collapse = ", "), call. = FALSE)
-  }
-
-  # Validate input_dir
-  if (!is.character(input_dir) || length(input_dir) != 1) {
-    stop("'input_dir' must be a single character string", call. = FALSE)
-  }
-
-  if (!dir.exists(input_dir)) {
-    stop("Directory does not exist: ", input_dir, call. = FALSE)
-  }
-
-  # Validate external_validation_fasta_dir
-  if (!is.null(external_validation_fasta_dir)) {
-    if (!is.character(external_validation_fasta_dir) ||
-        length(external_validation_fasta_dir) != 1) {
-      stop("'external_validation_fasta_dir' must be a single character string", call. = FALSE)
-    }
-    if (!dir.exists(external_validation_fasta_dir)) {
-      stop("'external_validation_fasta_dir' does not exist: ",
-           external_validation_fasta_dir, call. = FALSE)
-    }
-  }
-
-  # ===== START PIPELINE =====
-
+# Start pipeline
   if (verbose) {
-    cat("\n")
-    cat(strrep("=", 80), "\n")
-    cat("  SEQUENCE CLASSIFICATION PIPELINE\n")
-    cat(strrep("=", 80), "\n\n")
+    cat(" \n SEQUENCE CLASSIFICATION PIPELINE\n")
   }
 
   set.seed(123)
@@ -145,105 +102,109 @@ seq_classification <- function(input_dir,
     if (!is.null(details)) cat(details)
   }
 
-  # ===== STEP 1: CREATE DATA =====
+# Step 1: Create data
   print_step(1, 8, "K-mer counting and data creation")
 
   data_result <- create_data(input = input_dir, k = k)
 
-  print_step(1, 8, "", sprintf(
-    "  Sequences: %d | K-mers: %d | Classes: %d | K-mer size: %d\n\n",
-    nrow(data_result$metadata), ncol(data_result$kmers),
-    length(unique(data_result$metadata$class)), k
-  ))
+  if (verbose) {
+    cat(sprintf(
+      "  Sequences: %d | K-mers: %d | Classes: %d | K-mer size: %d\n\n",
+      nrow(data_result$metadata), ncol(data_result$kmers),
+      length(unique(data_result$metadata$class)), k
+    ))
+  }
 
   intermediate$data_result <- data_result
 
-  # ===== STEP 2: CREATE DENDROGRAM =====
+# Step 2: Create dendrogram
   print_step(2, 8, "Creating hierarchical dendrogram")
 
   dend_result <- create_dendrogram(
     data = data_result$kmers,
-    sequence_names = data_result$metadata$sequence_name,
-    dist_method = dist_method,
-    plot_title = "Hierarchical Clustering Dendrogram"
+    sequence_names = data_result$metadata$sequence_name
   )
 
-  print_step(2, 8, "", sprintf("  Distance: %s | Dendrogram created\n\n", dist_method))
+  if (verbose) {
+    cat(sprintf("  Distance: %s | Dendrogram created\n\n", dist_method))}
 
   intermediate$dend_result <- dend_result
 
-  # ===== STEP 3: CLUSTER VALIDATION =====
+# Step 3: Cluster validation
   print_step(3, 8, "Cluster validation and homogeneity assessment")
 
   cluster_result <- cluster_dendrogram(
     dendrogram = dend_result$dendrogram,
     class_labels = data_result$metadata$class[dend_result$order],
     hom_thresh = hom_thresh,
-    min_size = 1,
-    dendro_order = dend_result$order,
     sequence_names = data_result$metadata$sequence_name,
     data_result = data_result
   )
 
-  print_step(3, 8, "", sprintf(
+  if (verbose) {
+    cat(sprintf(
     "  Threshold: %.2f | Valid clusters: %d\n\n",
     hom_thresh, length(cluster_result$valid_clusters)
   ))
+  }
 
   intermediate$cluster_result <- cluster_result
 
-  # ===== STEP 4: CALCULATE MOTIFS =====
+  # Step 4: Calculate motifs
   print_step(4, 8, "Calculating cluster motifs")
 
   motif_result <- calculate_cluster_motifs(cluster_result)
 
-  print_step(4, 8, "", "  Motifs calculated\n\n")
+  if (verbose) {
+    cat(sprintf("  Motifs calculated\n\n"))
+  }
 
   intermediate$motif_result <- motif_result
 
-  # ===== STEP 5: SELECT MOTIFS =====
+  # Step 5: Select motifs
   print_step(5, 8, "Selecting top discriminative motifs")
 
   select_motifs_result <- select_motifs(motif_result, cluster_result, n = n_motifs, verbose = verbose)
 
-  print_step(5, 8, "", sprintf("  Top motifs per class: %d\n\n", n_motifs))
+  if (verbose) {
+    cat(sprintf("  Top motifs per class: %d\n\n", n_motifs))
+  }
 
   intermediate$select_motifs_result <- select_motifs_result
 
-  # ===== STEP 6: PREPARE DATASETS =====
+  # Step 6: Prepare datasets
   print_step(6, 8, "Preparing train/validation datasets")
 
   datasets_traintest <- select_sample_train_validation(
     cluster_result = cluster_result,
-    k_per_class = k_per_class,
+    seq_per_class = 200,
     min_size = min_size,
     external_validation_fasta_dir = external_validation_fasta_dir,
     k_for_external_validation = k_for_external_validation
   )
 
-  print_step(6, 8, "", sprintf(
+  if (verbose) {
+    cat(sprintf(
     "  Classification: %d | Validation: %d | Type: %s\n\n",
     nrow(datasets_traintest$classification_dataset),
     nrow(datasets_traintest$validation_dataset),
     if (is.null(external_validation_fasta_dir)) "internal" else "external"
   ))
+  }
 
   intermediate$datasets_traintest <- datasets_traintest
 
-  # ===== STEP 7: TRAIN MODELS =====
+  # Step 7: Train models
   print_step(7, 8, "Training classification models")
-  if (verbose) cat("\n")
 
   classification_result <- train_models_rf_xgboost(
     dataset_traintest = datasets_traintest,
     selected_motifs = select_motifs_result,
     prop_train = prop_train,
-    cv_folds = cv_folds,
-    seed = 123
+    cv_folds = cv_folds
   )
 
-  # ===== STEP 8: K-MER ANALYSIS =====
-  if (verbose) cat("\n")
+  # Step 8: K-mer analysis
   print_step(8, 8, "K-mer analysis (cluster and class-specific motifs)")
 
   if (!is.null(external_validation_fasta_dir)) {
@@ -258,7 +219,8 @@ seq_classification <- function(input_dir,
     threshold = kmer_analysis_threshold
   )
 
-  print_step(8, 8, "", sprintf(
+  if (verbose) {
+    cat(sprintf(
     "  Cluster-specific: %d | Class-specific: %d | Total: %d%s\n\n",
     nrow(kmer_analysis_result$unique_cluster_motifs),
     nrow(kmer_analysis_result$unique_class_motifs),
@@ -267,10 +229,10 @@ seq_classification <- function(input_dir,
       sprintf(" | Val: %d", nrow(kmer_analysis_result$validation$class_frequency_ranking))
     else ""
   ))
-
+}
   intermediate$kmer_analysis <- kmer_analysis_result
 
-  # ===== EXTRACT BEST MODEL =====
+  # Extract best model
   best_model <- classification_result$best_model_validation
   best_cm <- if (best_model == "Random Forest") {
     classification_result$confusion_matrix_validation_rf
@@ -286,14 +248,10 @@ seq_classification <- function(input_dir,
 
   processing_time <- Sys.time() - start_time
 
-  # ===== FINAL SUMMARY =====
+  # Final summary
   if (verbose) {
-    cat("\n", rep("=", 80), "\n", sep = "")
-    cat("  PIPELINE COMPLETED SUCCESSFULLY\n")
-    cat(rep("=", 80), "\n\n", sep = "")
-  }
+    cat("PIPELINE COMPLETED SUCCESSFULLY\n")
 
-  cat("\n", rep("=", 80), "\n", sep = "")
   cat("  FINAL CLASSIFICATION RESULTS\n")
   cat(rep("=", 80), "\n\n", sep = "")
   cat("Best Model:", best_model, "\n")
@@ -320,11 +278,10 @@ seq_classification <- function(input_dir,
   }
   cat("\n")
 
-  cat(rep("=", 80), "\n", sep = "")
   cat("Total Processing Time:", format(processing_time, digits = 2), "\n")
-  cat(rep("=", 80), "\n\n", sep = "")
+}
 
-  # ===== RETURN OBJECT =====
+  # Return object
   list(
     classification_results = classification_result,
     best_model = best_model,
@@ -339,7 +296,7 @@ seq_classification <- function(input_dir,
       input_dir = input_dir,
       k = k,
       hom_thresh = hom_thresh,
-      k_per_class = k_per_class,
+      seq_per_class = seq_per_class,
       min_size = min_size,
       n_motifs = n_motifs,
       prop_train = prop_train,
