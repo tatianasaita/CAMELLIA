@@ -65,7 +65,7 @@ create_data <- function(input,
   # Discover and identify FASTA files in the directory
   fasta_files <- list.files(
     input,
-    pattern = "\\.fasta$",
+    pattern = "\\.(fasta|fa|fna)$",
     full.names = TRUE,
     ignore.case = TRUE
   )

@@ -36,11 +36,41 @@
 select_motifs <- function(motif_cluster, cluster_result, n, verbose = TRUE) {
 
   n <- as.integer(n)
-  cluster_summary <- cluster_result$cluster_summary
-  dominant_classes <- unique(cluster_result$cluster_summary$dominant_class)
-  k <- length(dominant_classes)
-  m <- nrow(cluster_summary)
-  classe_order <- names(sort(table(dominant_classes), decreasing = TRUE))
+  cluster_summary  <- cluster_result$cluster_summary
+  dominant_classes <- unique(cluster_summary$dominant_class)
+  k                <- length(dominant_classes)
+  classe_order     <- names(sort(table(dominant_classes), decreasing = TRUE))
+
+  # ── Build cluster_to_class keeping only clusters present in motif_cluster ──
+  available_cols <- colnames(motif_cluster)   # e.g. "Cluster_1", "Cluster_3", ...
+
+  cluster_to_class_full <- setNames(
+    cluster_summary$dominant_class,
+    paste0("Cluster_", cluster_summary$cluster_id)
+  )
+
+  # Intersect: only keep clusters whose column actually exists in motif_cluster
+  valid_names      <- intersect(names(cluster_to_class_full), available_cols)
+
+  if (length(valid_names) == 0) {
+    stop(paste0(
+      "select_motifs: no cluster columns match between cluster_summary and motif_cluster.\n",
+      "  cluster_summary IDs : ", paste(cluster_summary$cluster_id, collapse = ", "), "\n",
+      "  motif_cluster cols  : ", paste(available_cols, collapse = ", ")
+    ))
+  }
+
+  # Warn about dropped clusters
+  dropped <- setdiff(names(cluster_to_class_full), available_cols)
+  if (length(dropped) > 0 && verbose) {
+    message(sprintf(
+      "  [select_motifs] %d cluster(s) in cluster_summary not found in motif_cluster and will be ignored: %s",
+      length(dropped), paste(dropped, collapse = ", ")
+    ))
+  }
+
+  cluster_to_class <- cluster_to_class_full[valid_names]
+  m                <- length(cluster_to_class)
 
   if (verbose) {
     message(sprintf("Classes (k): %d | Clusters (m): %d | Motifs (n): %d", k, m, n))
@@ -59,10 +89,6 @@ select_motifs <- function(motif_cluster, cluster_result, n, verbose = TRUE) {
   }
 
 # Select motifs: Case 2 and 3
-  cluster_to_class <- setNames(
-    cluster_summary$dominant_class,
-    paste0("Cluster_", cluster_summary$cluster_id)
-  )
 
   if (n < m) {
     if (verbose) message(sprintf("CASE 2: Distributing by class (%d <= %d < %d)", k, n, m))
