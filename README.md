@@ -181,28 +181,7 @@ If `output_dir` is left as `NULL` (the default), no files are written and the be
 
 [![DOI](https://zenodo.org/badge/1068178884.svg)](https://doi.org/10.5281/zenodo.21366714)
 
-If you use CAMELLIA in your research, please cite:
 
-```
-Saita, T. (2026). CAMELLIA: Combining AlignMent-free fEature seLection cLassIficAtion.
-Zenodo. https://doi.org/10.5281/zenodo.21366715
-```
-
-BibTeX:
-
-```bibtex
-@software{saita_camellia,
-  author       = {Saita, Tatiana},
-  title        = {{CAMELLIA: Combining AlignMent-free fEature
-                   seLection cLassIficAtion}},
-  year         = {2026},
-  publisher    = {Zenodo},
-  doi          = {10.5281/zenodo.21366715},
-  url          = {https://doi.org/10.5281/zenodo.21366715}
-}
-```
-
-> **Note:** the badge above links to the **Concept DOI** (`10.5281/zenodo.21366714`), which always resolves to the most recent version of CAMELLIA on Zenodo. The citation and BibTeX use the **version-specific DOI** (`10.5281/zenodo.21366715`), pinned to this exact release — recommended for citing the specific version used in a study.
 
 ## Getting Help
 
