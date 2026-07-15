@@ -76,19 +76,6 @@ result <- seq_classification(
 )
 ```
 
-### Using Affinity Propagation clustering instead of a dendrogram
-
-```r
-result <- seq_classification(
-  input_dir      = "path/to/fasta_files",
-  k              = 6,
-  seq_per_class  = 200,
-  min_size       = 800,
-  cluster_method = "apcluster",
-  ap_r           = 2
-)
-```
-
 ### Using external FASTA files for training and/or testing
 
 ```r
