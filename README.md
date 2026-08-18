@@ -199,7 +199,7 @@ Or check the function documentation:
 
 ## License
 
-GPL-3
+MIT
 
 ## Issues
 
