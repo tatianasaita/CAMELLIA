@@ -32,6 +32,8 @@
 #' @importFrom stats as.dendrogram order.dendrogram
 #' @importFrom grDevices palette.colors rainbow png dev.off
 #' @importFrom dendextend set
+#' @importFrom graphics plot legend
+#' 
 #' @export
 create_dendrogram_cent <- function(data,
                               sequence_names = NULL,
@@ -42,7 +44,7 @@ create_dendrogram_cent <- function(data,
                               min_seq_length = 800L) {
 
   # Proportions for centroid-distance sampling (fixed)
-  prop_far  <- 0.70   # 70% from the far tail
+  prop_far  <- 0.70   # 70% from the far tail 
   prop_near <- 0.30   # 30% from the near tail
   max_total_seqs <- 5000L
   # ---------------------------------------------------------------------------
@@ -187,14 +189,11 @@ create_dendrogram_cent <- function(data,
     threads = n_threads
   )
 
-  rm(data_matrix)
-  invisible(gc(verbose = FALSE))
 
   # Hierarchical clustering
   hc_result <- fastcluster::hclust(dist_matrix, method = hclust_method)
 
   rm(dist_matrix)
-  invisible(gc(verbose = FALSE))
 
 
   # Build dendrogram
@@ -224,27 +223,15 @@ create_dendrogram_cent <- function(data,
   dend <- dendextend::set(dend, "labels_col", label_colors)
 
   # Plot
-  .plot_dendrogram <- function() {
-    plot(dend, main = "Dendrogram", ylab = "Height")
-    legend("topright",
-           legend  = names(base_colors),
-           col     = base_colors,
-           pch     = 15,
-           pt.cex  = 2,
-           cex     = 0.8,
-           title   = "Classes",
-           bg      = "white",
-           box.lty = 1)
-  }
 
   if (is.null(output)) {
-    .plot_dendrogram()
+    .plot_dendrogram(dend, base_colors)
   } else {
     n_leaves  <- length(class_labels)
     img_width <- max(800L, n_leaves * 2L)   # minimum 800px, ~2px per leaf
-
+    
     grDevices::png(filename = output, width = img_width, height = 600, res = 150)
-    .plot_dendrogram()
+    .plot_dendrogram(dend, base_colors)
     grDevices::dev.off()
   }
 

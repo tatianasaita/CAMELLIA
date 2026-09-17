@@ -25,7 +25,8 @@
 #'         \item{length}{Sequence length in nucleotides}
 #'         \item{class}{Class name extracted from FASTA filename (without extension)}
 #'       }}
-#'   }
+#'     \item{k}{Integer. The k-mer size used to generate \code{kmers}.}
+#'   } 
 #'
 #' @details The function processes all FASTA files in the specified directory in the following steps:
 #' \enumerate{
@@ -54,7 +55,6 @@
 #' @importFrom Biostrings mkAllStrings
 #' @importFrom Biostrings readDNAStringSet
 #' @importFrom tools file_path_sans_ext
-#' @importFrom methods is
 #'
 #' @export
 create_data <- function(input,
@@ -75,13 +75,12 @@ create_data <- function(input,
   }
 
   if (verbose) {
-    cat("Found", length(fasta_files), "FASTA file(s)\n")
+    message(sprintf("Found %d FASTA file(s)", length(fasta_files)))
   }
 
   # All k-mers
   all_kmers <- Biostrings::mkAllStrings(alphabet, k)  #Generate all possible k-mers for parameters k and alphabet
-
-  n_kmers <- length(all_kmers) #all_kmers count
+  
 
   kmer_list <- vector("list", length = length(fasta_files)) #create list: kmer_list
   metadata_list <- vector("list", length = length(fasta_files)) #create list:metadata_list
@@ -91,19 +90,21 @@ create_data <- function(input,
     fasta_file <- fasta_files[file_idx]
     class_name <- tools::file_path_sans_ext(basename(fasta_file))
 
-    if (verbose) {
-      cat("[", file_idx, "/", length(fasta_files), "] ",
-          sprintf("%-20s", class_name), " ... ", sep = "")
-    } # Class of fasta files
-
     sequences <- Biostrings::readDNAStringSet(fasta_file)
-
-    if (length(sequences) == 0L) {
-      if (verbose) cat("0 sequences\n")
+    n_seq <- length(sequences)
+    
+    if (n_seq == 0L) {
+      if (verbose) {
+        message(sprintf("[%d/%d] %-20s ... 0 sequences",
+                        file_idx, length(fasta_files), class_name))
+      }
       next
     }
-
-    n_seq <- length(sequences)
+    
+    if (verbose) {
+      message(sprintf("[%d/%d] %-20s ... %d sequences",
+                      file_idx, length(fasta_files), class_name, n_seq))
+    }
 
     # Process all sequences at once
     result <- .process_sequences(sequences, all_kmers, k, alphabet, class_name) #internal help function, see internal-functions.R
@@ -120,21 +121,21 @@ create_data <- function(input,
     metadata_df <- do.call(rbind, metadata_list)
     rownames(metadata_df) <- NULL
 
-  if (verbose) {
-    cat("\nTotal sequences processed:", nrow(kmer_df), "\n")
-    cat("K-mer matrix dimensions:", nrow(kmer_df), "rows x",
-        ncol(kmer_df) - 1L, "columns\n")
-    cat("Class distribution:\n")
-    print(table(metadata_df$class))
-    cat("\n")
-  }
+    if (verbose) {
+      message(sprintf("Total sequences processed: %d", nrow(kmer_df)))
+      message(sprintf("K-mer matrix dimensions: %d rows x %d columns",
+                      nrow(kmer_df), ncol(kmer_df) - 1L))
+      message("Class distribution:")
+      message(paste(capture.output(print(table(metadata_df$class))), collapse = "\n"))
+    }
 
     # Return results
     result <- list(
-    kmers = kmer_df,
-    metadata = metadata_df
+      kmers = kmer_df,
+      metadata = metadata_df,
+      k = k
     )
-
+    
     class(result) <- "kmer_data"
     invisible(result)
 }

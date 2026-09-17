@@ -164,87 +164,6 @@ kmer_analysis <- function(cluster_result, motif_matrix) {
     motifs_by_class_rank <- .create_motifs_rank(cluster_result$data_result$kmers)
   }
 
-  # Test set analysis (external/held-out)
-  has_external_test <- !is.null(cluster_result$test_data)  &&
-    is.data.frame(cluster_result$test_data)                 &&
-    nrow(cluster_result$test_data) > 0L                     &&
-    "CLASS" %in% colnames(cluster_result$test_data)
-
-  test_results <- NULL
-
-  if (has_external_test) {
-    test_data     <- cluster_result$test_data
-    class_col_idx <- which(colnames(test_data) == "CLASS")
-    motif_cols    <- setdiff(seq_len(ncol(test_data)), class_col_idx)
-
-    tst_motifs         <- test_data[, motif_cols, drop = FALSE]
-    tst_classes        <- test_data$CLASS
-    tst_unique_classes <- unique(tst_classes)
-    tst_motif_names    <- colnames(tst_motifs)
-
-    tst_class_mat <- matrix(
-      0,
-      nrow     = length(tst_motif_names),
-      ncol     = length(tst_unique_classes),
-      dimnames = list(tst_motif_names, tst_unique_classes)
-    )
-
-    for (class_name in tst_unique_classes) {
-      class_rows <- tst_classes == class_name
-      tst_class_mat[, class_name] <- colSums(
-        tst_motifs[class_rows, , drop = FALSE], na.rm = TRUE
-      )
-    }
-
-    tst_presence        <- tst_class_mat > 0
-    tst_classes_per_mot <- rowSums(tst_presence)
-    tst_unique_idx      <- which(tst_classes_per_mot == 1L)
-
-    if (length(tst_unique_idx) > 0L) {
-      tst_class_idx <- unname(sapply(
-        seq_along(tst_unique_idx),
-        function(i) which(tst_presence[tst_unique_idx[i], ])[1L]
-      ))
-      tst_unique_class_motifs <- data.frame(
-        motif = tst_motif_names[tst_unique_idx],
-        class = tst_unique_classes[tst_class_idx],
-        value = tst_class_mat[cbind(tst_unique_idx, tst_class_idx)],
-        stringsAsFactors = FALSE,
-        row.names = NULL
-      )
-    } else {
-      tst_unique_class_motifs <- data.frame(
-        motif = character(0),
-        class = character(0),
-        value = numeric(0)
-      )
-    }
-
-    # Frequency ranking — safe assembly to avoid column name collisions
-    tst_cfr           <- as.data.frame(tst_class_mat, stringsAsFactors = FALSE)
-    tst_cfr$motif     <- tst_motif_names
-    tst_cfr$n_classes <- tst_classes_per_mot
-    tst_cfr           <- tst_cfr[, c("motif", tst_unique_classes, "n_classes")]
-    tst_class_frequency_ranking           <- tst_cfr[order(-tst_cfr$n_classes), ]
-    rownames(tst_class_frequency_ranking) <- NULL
-
-    # Frequency matrix
-    tst_class_frequency_matrix        <- as.data.frame(tst_class_mat)
-    tst_class_frequency_matrix$Total  <- rowSums(tst_class_mat)
-    tst_class_frequency_matrix        <- tst_class_frequency_matrix[
-      order(-tst_class_frequency_matrix$Total), ]
-
-    test_results <- list(
-      unique_class_motifs     = tst_unique_class_motifs,
-      class_frequency_ranking = tst_class_frequency_ranking,
-      class_frequency_matrix  = tst_class_frequency_matrix,
-      motifs_by_class_rank    = .create_motifs_rank(test_data),
-      n_sequences             = nrow(test_data),
-      n_classes               = length(tst_unique_classes),
-      class_names             = tst_unique_classes
-    )
-  }
-
   # Return results
   structure(
     list(
@@ -253,11 +172,9 @@ kmer_analysis <- function(cluster_result, motif_matrix) {
       unique_class_motifs       = unique_class_motifs,
       class_frequency_matrix    = class_frequency_matrix,
       motifs_by_class_rank      = motifs_by_class_rank,
-      cluster_to_class          = cluster_to_class,
-      has_external_test         = has_external_test,
-      test                      = test_results
+      cluster_to_class          = cluster_to_class
     ),
     class = "kmer_analysis_result"
   )
-}
+} 
 

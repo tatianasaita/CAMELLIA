@@ -1,17 +1,85 @@
 ################################################################################
-#' Internal helper functions of create_data.R
+# Internal helper functions of create_data.R
 ################################################################################
+#' .generateCombinations: Combinations of Nucleotides for K-mers
 #'
-#' .count_kmers: Count K-mers in single sequence
+#' Generates all possible k-mer combinations for a given word length using
+#' the DNA alphabet (A, T, C, G).
 #'
-#' @param sequences Sequences of DNAStringSet
-#' @param k Integer. Length of k-mers to count
-#' @param alphabet Character vector of valid nucleotides
+#' @param word Integer. The k-mer length (word size).
 #'
-#' @return Named integer vector with counts for all possible k-mers
+#' @return Character vector of all possible k-mer combinations, sorted
+#'   alphabetically.
 #'
 #' @keywords internal
+.generateCombinations <- function(word) {
+ nucleotides <- c("A", "T", "C", "G")
+ combinations <- do.call(expand.grid,
+                       replicate(word, nucleotides, simplify = FALSE))
+ sequences <- apply(combinations, 1, paste0, collapse = "")
+ sort(sequences)
+ }
 #'
+################################################################################
+#'
+#' .createNet_fast: Create Nets
+#'
+#' Builds a directed graph (network) of k-mer transitions from a DNA sequence,
+#' used for network-based sequence representation.
+#'
+#' @param word Integer. K-mer length used to build each node.
+#' @param step Integer. Step size between consecutive k-mer windows.
+#' @param sequence Character vector. The DNA sequence, split into individual
+#'   characters.
+#' @param all_vertices Character vector or NULL. Optional set of vertex names
+#'   that must be present in the resulting graph, even if not observed in
+#'   \code{sequence}. Default: NULL.
+#'
+#' @return An \code{igraph} directed graph object representing k-mer
+#'   transitions.
+#'
+#' @keywords internal
+.createNet_fast <- function(word, step, sequence, all_vertices = NULL) {
+   cont <- length(sequence)
+   
+   starts <- seq(1, cont - (word * 2) + 1, by = step)
+   
+   make_kmers <- function(idx_starts) {
+     sapply(idx_starts, function(i) {
+       paste0(sequence[i:(i + word - 1)], collapse = "")
+     })
+   }
+   
+   from_kmers <- make_kmers(starts)
+   to_kmers   <- make_kmers(starts + word)
+   
+   edges_vec <- as.vector(rbind(from_kmers, to_kmers))
+   
+   net <- igraph::graph(edges = edges_vec, directed = TRUE)
+   
+   if (!is.null(all_vertices)) {
+     missing_v <- setdiff(all_vertices, igraph::V(net)$name)
+     if (length(missing_v) > 0) {
+       net <- igraph::add_vertices(net, length(missing_v), name = missing_v)
+     }
+   }
+   
+   return(net)
+ }
+
+
+################################################################################
+#'
+#' .count_kmers: Count K-mers in a Single Sequence
+#'
+#' @param sequence A single DNA sequence, either a \code{DNAString} object or
+#'   a character string/object coercible to one.
+#' @param k Integer. Length of k-mers to count.
+#' @param alphabet Character vector of valid nucleotides.
+#'
+#' @return Named integer vector with counts for all possible k-mers.
+#'
+#' @keywords internal
 .count_kmers <- function(sequence, k, alphabet) {
 
 # Handle Biostrings objects
@@ -38,17 +106,16 @@
 #'
 #' .process_sequences: Process Sequences from a Single FASTA File
 #'
-#' @param sequences A DNAStringSet object containing sequences
-#' @param all_kmers Character vector of all possible k-mers
-#' @param k Integer k-mer length
-#' @param alphabet Character vector of nucleotides
-#' @param class_name Character string with the class label
+#' @param sequences A DNAStringSet object containing sequences.
+#' @param all_kmers Character vector of all possible k-mers.
+#' @param k Integer. K-mer length.
+#' @param alphabet Character vector of nucleotides.
+#' @param class_name Character string with the class label.
 #'
-#' @note Require .count_kmers aux. function.
-#' @return kmer_df (data frame) and metadata_df (data frame)
+#' @return A list with two elements: \code{kmers} (data frame of k-mer
+#'   counts) and \code{metadata} (data frame of sequence metadata).
 #'
 #' @keywords internal
-#'
 .process_sequences <- function(sequences, all_kmers, k, alphabet, class_name) {
 
     n_seq   <- length(sequences)
@@ -86,9 +153,40 @@
     list(kmers = kmer_df, metadata = metadata_df)
   }
 
-
 ################################################################################
-#' Internal helper functions of cluster_dendrogram.R
+# Internal helper functions of create_dendrogram_cent.R
+################################################################################
+#'
+#' .plot_dendrogram: Plot Dendrogram with Class Color Legend
+#'
+#' Plots a dendrogram with colored leaves and a legend mapping colors to
+#' class names.
+#'
+#' @param dend A dendrogram object, typically produced by
+#'   \code{\link[stats]{as.dendrogram}} with leaf colors already applied
+#'   (e.g., via \code{dendextend::set(dend, "labels_col", ...)}).
+#' @param base_colors Named character vector mapping class names to colors,
+#'   used to build the legend.
+#'
+#' @return NULL (invisibly). Called for its side effect of producing a plot
+#'   on the current graphics device.
+#'
+#' @keywords internal
+.plot_dendrogram <- function(dend, base_colors) {
+  graphics::plot(dend, main = "Dendrogram", ylab = "Height")
+  graphics::legend("topright",
+                   legend  = names(base_colors),
+                   col     = base_colors,
+                   pch     = 15,
+                   pt.cex  = 2,
+                   cex     = 0.8,
+                   title   = "Classes",
+                   bg      = "white",
+                   box.lty = 1)
+}
+ 
+################################################################################
+# Internal helper functions of cluster_dendrogram.R
 ################################################################################
 #'
 #' .find_segments: Find Contiguous Segments in Index Vector
@@ -129,7 +227,9 @@
 }
 
 ################################################################################
+#'
 #' .create_cluster: Create Cluster Object
+#' 
 #' @param indices Integer vector of element indices assigned to this cluster.
 #'   These are positions in the original dendrogram or data ordering.
 #' @param classes Character vector of class labels corresponding to each index.
@@ -153,6 +253,7 @@
   )
 }
 ################################################################################
+#'
 #' .calc_homogeneity: Calculate Cluster Homogeneity
 #'
 #' @param classes Character vector of class labels for cluster elements.
@@ -168,7 +269,9 @@
   return(max_count / length(classes))
 }
 ################################################################################
+#'
 #' .is_complete_class_cluster: Check if Cluster Contains Complete Class
+#' 
 #' @param cluster_classes Character vector of class labels in the cluster being
 #'   evaluated.
 #' @param class_total_counts Named integer vector (typically from \code{table()})
@@ -189,7 +292,9 @@
   return(FALSE)
 }
 ################################################################################
+#'
 #' .get_dominant: Get Dominant Class
+#' 
 #' @param classes Character vector of class labels.
 #'
 #' @return Character. The name of the dominant (most frequent) class. If multiple
@@ -203,69 +308,15 @@
 }
 
 ################################################################################
-#' Build Cluster Summary for Affinity Propagation Results
-#'
-#' @param clusters List of cluster objects
-#' @param class_total_counts Table of total class counts
-#' @param n_clusters Number of clusters
-#'
-#' @return Data frame with cluster summary statistics
-#'
-#' @keywords internal
-.build_cluster_summary_ap <- function(clusters, class_total_counts, n_clusters) {
-
-  cluster_summary <- data.frame(
-    cluster_id = integer(n_clusters),
-    n_elements = integer(n_clusters),
-    dominant_class = character(n_clusters),
-    homogeneity = numeric(n_clusters),
-    n_classes = integer(n_clusters),
-    class_composition = character(n_clusters),
-    is_complete_class = logical(n_clusters),
-    exemplar_id = integer(n_clusters),
-    stringsAsFactors = FALSE
-  )
-
-  for (ki in seq_len(n_clusters)) {
-    cl <- clusters[[ki]]
-    class_table <- table(cl$classes)
-    dominant_class <- names(which.max(class_table))
-
-    # Homogeneity: proportion of dominant class
-    homogeneity <-  as.numeric(max(class_table) / sum(class_table))
-
-    # Is complete class: contains all members of dominant class
-    is_complete <- !is.na(class_total_counts[dominant_class]) &&
-      class_table[dominant_class] == class_total_counts[dominant_class]
-
-    # Class composition string (match dendrogram format)
-    class_comp <- paste(
-      names(class_table),
-      class_table,
-      sep = ":",
-      collapse = "; "
-    )
-
-    cluster_summary$cluster_id[ki]        <- ki
-    cluster_summary$n_elements[ki]        <- length(cl$classes)
-    cluster_summary$dominant_class[ki]    <- dominant_class
-    cluster_summary$homogeneity[ki]       <- homogeneity
-    cluster_summary$n_classes[ki]         <- length(class_table)
-    cluster_summary$class_composition[ki] <- class_comp
-    cluster_summary$is_complete_class[ki] <- is_complete
-    cluster_summary$exemplar_id[ki]       <- cl$exemplar_id
-  }
-
-  return(cluster_summary)
-}
-################################################################################
-#' Internal helper functions of calculate_cluster_motifs.R
+# Internal helper functions of calculate_cluster_motifs.R
 ################################################################################
 #'
-#'.normalize_motif_matrix: Normalize Motif Matrix Using Min-Max Normalization
+#' .normalize_motif_matrix: Normalize Motif Matrix Using Min-Max Normalization
 #'
-#' @param motif_raw Numeric matrix to normalize (by column)
-#' @return Normalized matrix with values between 0 and 1
+#' @param motif_raw Numeric matrix to normalize (by column).
+#'
+#' @return Normalized matrix with values between 0 and 1.
+#'
 #' @keywords internal
 .normalize_motif_matrix <- function(motif_raw) {
 
@@ -292,10 +343,10 @@
 }
 
 ################################################################################
-#' Internal helper functions of select_motifs.R
+# Internal helper functions of select_motifs.R
 ################################################################################
 #'
-#'.select_by_clas_fast: Select Top Motifs by Class (Fast Method)
+#' .select_by_class_fast: Select Top Motifs by Class (Fast Method)
 #'
 #' @param motif_cluster A data.frame or matrix with motifs as rows and clusters
 #'   as columns. Row names should be motif identifiers.
@@ -352,7 +403,8 @@
 }
 ################################################################################
 #'
-#'.select_by_cluster_fast: Select Top Motifs by Cluster (Fast Method)
+#' .select_by_cluster_fast: Select Top Motifs by Cluster (Fast Method)
+#'
 #' @param motif_cluster A data.frame or matrix with motifs as rows and clusters
 #'   as columns. Row names should be motif identifiers.
 #' @param cluster_to_class A named vector mapping cluster names to class labels.
@@ -361,118 +413,181 @@
 #'   remainder distribution priority.
 #' @param n An integer specifying the total number of motifs to select.
 #' @param m An integer specifying the total number of clusters.
+#' @param cluster_homogeneity Named numeric vector or NULL. Homogeneity score
+#'   per cluster, with names matching the columns of \code{motif_cluster}. Used
+#'   to prioritize less homogeneous clusters when distributing the remainder.
+#'   Default: NULL.
 #'
 #' @return A named list where each element corresponds to a class and contains
 #'   a character vector of selected motif names.
 #'
 #' @keywords internal
-.select_by_cluster_fast <- function(motif_cluster, cluster_to_class, classe_order, n, m) {
-
+.select_by_cluster_fast <- function(motif_cluster, cluster_to_class, classe_order, n, m,
+                                    cluster_homogeneity = NULL) {
+  
   motifs_per_cluster <- n %/% m
-  remainder <- n %% m
-
+  remainder          <- n %% m
+  
   classe_motifs <- setNames(vector("list", length(classe_order)), classe_order)
-  all_motifs <- rownames(motif_cluster)
-  used_motifs <- setNames(rep(FALSE, length(all_motifs)), all_motifs)
-
-  # Process each cluster
+  all_motifs    <- rownames(motif_cluster)
+  used_motifs   <- setNames(rep(FALSE, length(all_motifs)), all_motifs)
+  
+  # Select base motifs for each cluster
   for (col in names(cluster_to_class)) {
     classe <- cluster_to_class[col]
-    # for both matrix and data.frame inputs.
     values <- motif_cluster[, col, drop = TRUE]
-
+    
     if (is.null(values) || length(values) == 0) {
       warning(sprintf(
-        ".select_by_cluster_fast: column '%s' not found or empty in motif_cluster — skipped.",
-        col
+        ".select_by_cluster_fast: column '%s' not found or empty in motif_cluster - skipped.", col
       ))
       next
     }
-
-    # Guard against non-numeric / all-NA columns
-    if (!is.numeric(values)) {
-      values <- suppressWarnings(as.numeric(values))
-    }
-
+    
+    if (!is.numeric(values)) values <- suppressWarnings(as.numeric(values))
+    
     if (all(is.na(values))) {
       warning(sprintf(
-        ".select_by_cluster_fast: column '%s' is entirely NA — skipped.", col
+        ".select_by_cluster_fast: column '%s' is entirely NA - skipped.", col
       ))
       next
     }
-
+    
     top_idx  <- order(values, decreasing = TRUE, na.last = TRUE)
     selected <- character(0)
-
+    
     for (idx in top_idx) {
       if (length(selected) >= motifs_per_cluster) break
       motif <- all_motifs[idx]
       if (!used_motifs[motif]) {
-        selected <- c(selected, motif)
+        selected        <- c(selected, motif)
         used_motifs[motif] <- TRUE
       }
     }
     classe_motifs[[classe]] <- c(classe_motifs[[classe]], selected)
   }
-
-  # Distribute remainder
-  if (remainder > 0) {
-    for (i in seq_len(remainder)) {
-      classe_to_add <- classe_order[((i - 1L) %% length(classe_order)) + 1L]
-      cols <- names(cluster_to_class)[cluster_to_class == classe_to_add]
-      if (length(cols) == 0) next
-
-      scores <- rowSums(motif_cluster[, cols, drop = FALSE])
-      top_idx <- order(scores, decreasing = TRUE)
-
-      for (idx in top_idx) {
-        motif <- all_motifs[idx]
-        if (!used_motifs[motif]) {
-          classe_motifs[[classe_to_add]] <- c(classe_motifs[[classe_to_add]], motif)
-          used_motifs[motif] <- TRUE
-          break
+  
+  # Distribui o resto por homogeneidade crescente
+  if (remainder > 0 && !is.null(cluster_homogeneity)) {
+    
+    # cluster_homogeneity: named numeric vector - names match motif_cluster columns
+    valid_hom <- cluster_homogeneity[names(cluster_homogeneity) %in% names(cluster_to_class)]
+    
+    if (length(valid_hom) == 0) {
+      warning(".select_by_cluster_fast: 'cluster_homogeneity' has no names matching the clusters - remainder ignored.")
+    } else {
+      # Sort clusters from least to most homogeneous
+      clusters_by_hom <- names(sort(valid_hom, decreasing = FALSE))
+      
+      for (i in seq_len(remainder)) {
+        col    <- clusters_by_hom[[i]]           # i-th cluster in ascending order
+        classe <- cluster_to_class[col]
+        values <- motif_cluster[, col, drop = TRUE]
+        
+        if (!is.numeric(values)) values <- suppressWarnings(as.numeric(values))
+        
+        top_idx <- order(values, decreasing = TRUE, na.last = TRUE)
+        
+        for (idx in top_idx) {
+          motif <- all_motifs[idx]
+          if (!used_motifs[motif]) {
+            classe_motifs[[classe]] <- c(classe_motifs[[classe]], motif)
+            used_motifs[motif]      <- TRUE
+            break
+          }
         }
       }
     }
+    
+  } else if (remainder > 0 && is.null(cluster_homogeneity)) {
+    warning(".select_by_cluster_fast: 'cluster_homogeneity' not provided - remainder will not be distributed.")
   }
-
+  
   classe_motifs
 }
-
 ################################################################################
-#' Internal helper functions of select_train_test.R
+# Internal helper functions of select_train_test.R
 ################################################################################
-#' Select k sequences per class
+#' .select_by_class: Select Sequences for Training (Internal)
 #'
-#' .select_by_class:  Select k Sequences per Class
+#' Randomly samples \code{n_train} rows from \code{data}, which must already
+#' be filtered to a single class. The seed is intentionally not set here —
+#' reproducibility is the caller's responsibility (set seed before calling
+#' \code{select_train_test}).
 #'
-#' @param data A data.frame containing at least a 'class' column and sequence
-#'   information.
-#' @param n_train Integer. Number of sequences to select for training per class.
-#' @param dataset_name Character. Name identifier for the dataset (used in messages).
-#'   Default is empty string.
+#' @param data Data frame of metadata for a single class.
+#' @param n_train Integer. Number of sequences to select.
+#' @param dataset_name Character label written to the \code{dataset} column
+#'   (default: \code{"train"}).
 #'
-#' @return A data.frame with selected sequences from all classes combined.
-#'   Returns empty data.frame if no sequences can be selected. Row names are reset.
+#' @return A data frame with \code{n_train} rows (or fewer if \code{data} has
+#'   fewer rows) and a \code{dataset} column set to \code{dataset_name}.
 #'
 #' @keywords internal
-.select_by_class <- function(data, n_train, dataset_name = "") {
-
-  class_data       <- data[data$class == unique(data$class)[1], ]  # só 1 classe por chamada agora
-  n_available      <- nrow(data)
-
-  # Garante que não tenta selecionar mais do que o disponível
-  n_select         <- min(n_train, n_available)
-
-  selected         <- data[sample(n_available, n_select), ]
-  selected$dataset <- if (nzchar(dataset_name)) dataset_name else "train"
+.select_by_class <- function(data, n_train, dataset_name = "train") {
+  n_available        <- nrow(data)
+  n_select           <- min(as.integer(n_train), n_available)
+  selected           <- data[sample(n_available, n_select), ]
+  selected$dataset   <- dataset_name
   rownames(selected) <- NULL
-
   selected
+}
+################################################################################
+#'
+#' .align_kmer_columns: Align K-mer Columns Between Train and Test Matrices
+#'
+#' Checks whether the two matrices share the same k-mer columns and, if not,
+#' subsets both to their intersection, emitting warnings as appropriate.
+#'
+#' @param train_dataset Matrix. K-mer counts for the training set.
+#' @param test_dataset  Matrix. K-mer counts for the test set.
+#'
+#' @return A named list with elements \code{train_dataset} and
+#'   \code{test_dataset}, both restricted to common columns.
+#'
+#' @keywords internal
+.align_kmer_columns <- function(train_dataset, test_dataset) {
+  n_kmers_train <- ncol(train_dataset)
+  n_kmers_test  <- ncol(test_dataset)
+  
+  if (n_kmers_train != n_kmers_test) {
+    warning("K-mer count mismatch: train=", n_kmers_train,
+            ", test=", n_kmers_test, call. = FALSE)
+    
+    common_kmers <- intersect(colnames(train_dataset), colnames(test_dataset))
+    
+    if (length(common_kmers) < n_kmers_train * 0.7) {
+      warning("Only ", length(common_kmers), " common k-mers found (",
+              round(length(common_kmers) / n_kmers_train * 100, 1), "%)",
+              call. = FALSE)
+    }
+    
+    train_dataset <- train_dataset[, common_kmers, drop = FALSE]
+    test_dataset  <- test_dataset[,  common_kmers, drop = FALSE]
+  }
+  
+  list(train_dataset = train_dataset, test_dataset = test_dataset)
 }
 
 ################################################################################
-#' Internal helper functions of train_models_rf_xgboost.R
+#' Extract Class Label from Sequence Name
+#'
+#' Extracts the class label from a sequence name by removing everything from
+#' the first "." onward (e.g., \code{"type1.seq_042"} becomes \code{"type1"}).
+#'
+#' @param sequence_names Character vector of sequence names.
+#'
+#' @return Character vector with the class label extracted from each sequence
+#'   name.
+#'
+#' @keywords internal
+#' 
+.class_from_sequence_name <- function(sequence_names) {
+  sub("\\..*", "", sequence_names)
+}
+
+################################################################################
+# Internal helper functions of train_models_rf_xgboost.R
 ################################################################################
 #'
 #' .rename_class_column: Rename CLASS column to class
@@ -510,13 +625,17 @@
   }
 }
 
-################################################################################
 
 
 
+
 ################################################################################
-#' Internal helper functions of kmer_analysis.R
+# Internal helper functions of kmer_analysis.R
 ################################################################################
+#' .create_motifs_rank: Rank Motifs by Class Frequency 
+#'
+#' Builds a formatted summary table of motif occurrence sums and counts per
+#' class.
 #'
 #' @param data A data frame containing motif columns and a class column.
 #' @param class_col A character string specifying the name of the class column.
@@ -591,7 +710,7 @@
 }
 
 ################################################################################
-#' Internal helper functions of kmers_in_seq.R
+# Internal helper functions of kmers_in_seq.R
 ################################################################################
 #'
 #' .read_fasta_sequences: Read and consolidate FASTA sequences from directory
@@ -694,7 +813,7 @@
       c("sequences", "sequence_names", "class_lookup", "length_lookup", "dataset"),
       envir = environment()
     )
-    parallel::clusterEvalQ(cl, library(stringi))
+    
     results_list <- parallel::parLapply(cl, motifs, process_motif)
   } else {
     results_list <- lapply(motifs, process_motif)
@@ -722,3 +841,30 @@
   return(result_df)
 }
 
+################################################################################
+# Internal helper functions of seq_classification_cent.R
+################################################################################
+#' .print_step: Print Pipeline Step Header
+#'
+#' Prints a formatted step header (step number, total steps, and title) to
+#' the console, followed by an optional details message. Used to report
+#' progress through the sequence classification pipeline.
+#'
+#' @param step Integer. Current step number.
+#' @param total_steps Integer. Total number of steps in the pipeline.
+#' @param title Character. Short description of the current step.
+#' @param verbose Logical. If FALSE, the function returns immediately without
+#'   printing anything. Default: TRUE.
+#' @param details Character or NULL. Optional additional message printed
+#'   after the step header. Default: NULL.
+#'
+#' @return NULL (invisibly). Called for its side effect of printing progress
+#'   messages.
+#'
+#' @keywords internal
+.print_step <- function(step, total_steps, title, verbose = TRUE, details = NULL) {
+  if (!verbose) return()
+  message(sprintf("STEP %d/%d: %s", step, total_steps, title))
+  message(paste(rep("-", 80), collapse = ""))
+  if (!is.null(details)) message(details)
+} 

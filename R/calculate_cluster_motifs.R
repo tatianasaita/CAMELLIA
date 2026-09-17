@@ -4,8 +4,7 @@
 #' sequences in the cluster. The resulting motif matrix is normalized using
 #' min-max normalization applied independently to each cluster column.
 #'
-#' @param result_cluster_dendrogram,
-#'   returned by cluster_dendrogram().
+#' @param result_cluster_dendrogram List returned by \code{cluster_dendrogram()}
 #' @param ... Additional arguments passed to methods.
 #'
 #' @return A data.frame of class 'cluster_motifs' with k-mer motifs by cluster (normalized).
@@ -31,18 +30,16 @@
 #'
 #' @examples
 #' \dontrun{
-#' result_cluster_motifs <- calculate_cluster_motifs(data_result)
-#' }
+#' result_cluster_motifs <- calculate_cluster_motifs(result_cluster_dendrogram)
+#' } 
 #'
 #' @export
 calculate_cluster_motifs <- function(result_cluster_dendrogram, ...) {
 
-  method <- result_cluster_dendrogram$method
-
   kmers_df <- result_cluster_dendrogram$data_result$kmers
 
   if (is.null(kmers_df)) {
-    stop("data_result$kmers is NULL: verifique o objeto retornado por cluster_dendrogram()")
+    stop("data_result$kmers is NULL: check the object returned by cluster_dendrogram().")
   }
 
   # Exclude CLASS column if present
@@ -52,44 +49,22 @@ calculate_cluster_motifs <- function(result_cluster_dendrogram, ...) {
   } else {
     kmers_df
   }
-
-  if (method == "apcluster") {
-
-    # ── AJUSTE: subsetar apenas as sequências que participaram da clusterização
-    selected_indices <- result_cluster_dendrogram$selected_indices
-
-    if (is.null(selected_indices)) {
-      stop("selected_indices is NULL: verifique o objeto retornado por cluster_dendrogram()")
-    }
-
-    kmers_numeric      <- kmers_numeric[selected_indices, , drop = FALSE]
-    cluster_assignments <- result_cluster_dendrogram$cluster_assignment[selected_indices]
-
-    if (nrow(kmers_numeric) != length(cluster_assignments)) {
-      stop(sprintf(
-        "Mismatch: kmers subset has %d rows but cluster_assignment subset has length %d.",
-        nrow(kmers_numeric), length(cluster_assignments)
-      ))
-    }
-
+  
+  cluster_assignments <- if (!is.null(result_cluster_dendrogram$cluster_assignment_dendro_order)) {
+    result_cluster_dendrogram$cluster_assignment_dendro_order
   } else {
-
-    cluster_assignments <- if (!is.null(result_cluster_dendrogram$cluster_assignment_dendro_order)) {
-      result_cluster_dendrogram$cluster_assignment_dendro_order
-    } else {
-      result_cluster_dendrogram$cluster_assignment
-    }
-
-    if (nrow(kmers_numeric) != length(cluster_assignments)) {
-      stop(sprintf(
-        "Mismatch: kmers has %d rows but cluster_assignment has length %d.",
-        nrow(kmers_numeric), length(cluster_assignments)
-      ))
-    }
+    result_cluster_dendrogram$cluster_assignment
   }
-
+  
+  if (nrow(kmers_numeric) != length(cluster_assignments)) {
+    stop(sprintf(
+      "Mismatch: kmers has %d rows but cluster_assignment has length %d.",
+      nrow(kmers_numeric), length(cluster_assignments)
+    ))
+  }
+  
   if (is.null(cluster_assignments)) {
-    stop("cluster_assignments is NULL: verifique o objeto retornado por cluster_dendrogram()")
+    stop("cluster_assignments is NULL: check the object returned by cluster_dendrogram().")
   }
 
   # Get unique clusters and cluster count
@@ -111,7 +86,7 @@ calculate_cluster_motifs <- function(result_cluster_dendrogram, ...) {
   for (i in seq_along(cluster_ids)) {
     cluster_id <- cluster_ids[i]
 
-    # NA-safe mask: NA == cluster_id retorna NA, tratado como FALSE
+    # NA-safe mask: NA == cluster_id returns NA, treated as FALSE
     cluster_mask  <- !is.na(cluster_assignments) & cluster_assignments == cluster_id
     cluster_kmers <- kmers_numeric[cluster_mask, , drop = FALSE]
 

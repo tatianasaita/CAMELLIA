@@ -1,25 +1,27 @@
 #' Find K-mer Motifs in Training and Validation Sequences
 #'
 #' @param motifs Character vector or list of motifs to search for
-#' @param cluster_result Object from cluster_dendrogram() containing metadata
-#' @param sequences Character vector of sequences (default: NULL, reads from input_dir)
-#' @param input_dir Path to training FASTA directory (default: NULL)
-#' @param sequence_names Character vector of sequence names (default: NULL)
-#' @param external_validation_fasta_dir Path to validation FASTA directory (default: NULL)
-#' @param validation_predictions Data.frame with 'class' column for validation (default: NULL)
+#' @param data_result Object of class \code{"kmer_data"} from \code{create_data()},
+#'   containing \code{$metadata} with class and length for all labeled sequences.
+#' @param labeled_sequences Path to directory containing training FASTA files.
+#'   The function will read all FASTA files from this directory.
+#' @param external_test_fasta_dir Path to directory containing test FASTA files (default: NULL)
+#' @param test_predictions Data.frame with 'class' column for test set (default: NULL)
 #' @param verbose Logical (default: TRUE)
 #'
-#' @return Data.frame with columns: motif, sequence_name, class, sequence_length, position_start, position_end, dataset
+#' @return Data.frame with columns: motif, sequence_name, class, sequence_length,
+#'   position_start, position_end, dataset
 #'
 #' @details
 #' \itemize{
 #'  \item Searches for exact matches of k-mer motifs in DNA sequences
 #'  \item Uses parallel processing (automatically detects available CPU cores)
-#'  \item Supports both training and validation datasets
-#'  \item Training sequences require cluster_result object for metadata (class and length)
-#'  \item Validation dataset is optional and requires external FASTA files
+#'  \item Supports both training and test datasets
+#'  \item Training sequences require \code{data_result} for metadata (class and length)
+#'  \item If a sequence is not found in metadata, class and length will be \code{NA}
+#'  \item Test dataset is optional and requires external FASTA files
 #'  \item Returns positions (start/end) of all motif occurrences
-#'}
+#' }
 #'
 #' @note
 #' \itemize{
@@ -28,139 +30,153 @@
 #' }
 #'
 #' @examples
-#'\dontrun{
-#' # With validation dataset
+#' \dontrun{
+#' # Using directory paths for training sequences
 #' result_kmers_in_seq <- kmers_in_seq(
-#'   motifs = motifs,
-#'   cluster_result = result_cluster_dendrogram,
-#'   input_dir = "path/to/training",
-#'   external_validation_fasta_dir = "path/to/validation",
-#'   validation_predictions = result_models$predictions_validation_xgb #or predictions_validation_rf
+#'   motifs            = motifs,
+#'   data_result       = result_create_data,
+#'   labeled_sequences = "path/to/fasta/directory"
 #' )
 #'
-#' @importFrom parallel detectCores
+#' # With external test dataset
+#' result_kmers_in_seq <- kmers_in_seq(
+#'   motifs                  = motifs,
+#'   data_result             = result_create_data,
+#'   labeled_sequences       = "E:/TATIANA/CAMELLIA-main/inst/extdata",
+#'   external_test_fasta_dir = "E:/path/to/test/fasta",
+#'   test_predictions        = result_models$predictions_test_ext_xgb
+#' )
+#' }
+#'
+#' @importFrom parallel detectCores makeCluster stopCluster clusterEvalQ parLapply clusterExport
 #' @importFrom stringi stri_locate_all_fixed
-#' @importFrom parallel makeCluster
-#' @importFrom parallel stopCluster
-#' @importFrom parallel clusterEvalQ
-#' @importFrom parallel parLapply
-#' @importFrom parallel clusterExport
 #' @importFrom seqinr read.fasta
 #'
 #'
 #' @export
 kmers_in_seq <- function(motifs,
-                         cluster_result,
-                         sequences = NULL,
-                         input_dir = NULL,
-                         sequence_names = NULL,
-                         external_validation_fasta_dir = NULL,
-                         validation_predictions = NULL,
-                         verbose = TRUE) {
+                         data_result,
+                         labeled_sequences,
+                         external_test_fasta_dir = NULL,
+                         test_predictions        = NULL,
+                         verbose                 = TRUE) {
 
-  metadata <- cluster_result$data_result$metadata
+  if (!inherits(data_result, "kmer_data")) {
+    stop("'data_result' must be an object of class 'kmer_data' from create_data().")
+  }
 
-  n_cores <- max(1, parallel::detectCores() - 1)
+  metadata <- data_result$metadata
+  if (is.null(metadata) || nrow(metadata) == 0L) {
+    stop("'data_result$metadata' is NULL or empty.")
+  }
+
+
+  n_cores <- max(1L, parallel::detectCores() - 1L)
+
 
   # Process motifs
-  motifs <- unlist(motifs, use.names = FALSE)
+  motifs        <- unlist(motifs, use.names = FALSE)
   unique_motifs <- unique(motifs)
 
   # Get training class and length lookup
-  train_class_lookup <- setNames(
-    as.character(cluster_result$data_result$metadata$class),
-    cluster_result$data_result$metadata$sequence_name
-  )
+  train_class_lookup  <- setNames(as.character(metadata$class), metadata$sequence_name)
+  train_length_lookup <- setNames(as.integer(metadata$length),  metadata$sequence_name)
 
-  train_length_lookup <- setNames(
-    as.integer(cluster_result$data_result$metadata$length),
-    cluster_result$data_result$metadata$sequence_name
-  )
-
-  # Check if has external validation
-  has_validation <- !is.null(external_validation_fasta_dir)
+  has_test <- !is.null(external_test_fasta_dir)
 
   # Read training sequences
-  if (is.null(sequences)) {
-    fasta_data <- .read_fasta_sequences(input_dir)
-    sequences <- fasta_data$sequences
-    sequence_names <- fasta_data$names
-  }
+  if (verbose) message("Reading training sequences from: ", labeled_sequences)
+  fasta_data     <- .read_fasta_sequences(labeled_sequences)
+  sequences      <- fasta_data$sequences
+  sequence_names <- fasta_data$names
+  n_train        <- length(sequences)
 
-  if (is.null(sequence_names)) {
-    sequence_names <- if (!is.null(names(sequences))) names(sequences) else sprintf("seq_%d", seq_along(sequences))
-  }
-
-  n_train <- length(sequences)
-  n_val <- 0
+  if (verbose) message("Loaded ", n_train, " training sequences.")
 
   # Read validation sequences if provided
-  val_sequences <- NULL
-  val_sequence_names <- NULL
-  val_class_lookup <- NULL
-  val_length_lookup <- NULL
+  tst_sequences      <- NULL
+  tst_sequence_names <- NULL
+  tst_class_lookup   <- NULL
+  tst_length_lookup  <- NULL
+  n_test             <- 0L
 
-  if (has_validation) {
-    val_fasta_data <- .read_fasta_sequences(external_validation_fasta_dir)
-    val_sequences <- val_fasta_data$sequences
-    val_sequence_names <- val_fasta_data$names
-    n_val <- length(val_sequences)
+  if (has_test) {
+    if (verbose) message("Reading test sequences from: ", external_test_fasta_dir)
+    tst_fasta_data     <- .read_fasta_sequences(external_test_fasta_dir)
+    tst_sequences      <- tst_fasta_data$sequences
+    tst_sequence_names <- tst_fasta_data$names
+    n_test             <- length(tst_sequences)
 
-    # Get validation class lookup
-    if (!is.null(validation_predictions) && "class" %in% colnames(validation_predictions)) {
-      val_class_lookup <- setNames(
-        as.character(validation_predictions$class),
-        val_sequence_names
+    if (verbose) message("Loaded ", n_test, " test sequences.")
+
+    # Class lookup from test predictions
+    if (!is.null(test_predictions) &&
+        "class" %in% colnames(test_predictions)) {
+      tst_class_lookup <- setNames(
+        as.character(test_predictions$class),
+        tst_sequence_names
+      )
+    } else {
+      if (verbose) {
+        message("'test_predictions' not provided: class will be NA for test sequences.")
+      }
+      tst_class_lookup <- setNames(
+        rep(NA_character_, length(tst_sequence_names)),
+        tst_sequence_names
       )
     }
 
-    # Calculate validation sequence lengths
-    val_length_lookup <- setNames(
-      sapply(val_sequences, nchar),
-      val_sequence_names
+    # Length lookup from test sequences
+    tst_length_lookup <- setNames(
+      sapply(tst_sequences, nchar),
+      tst_sequence_names
     )
   }
 
   start_time <- Sys.time()
 
   # Search in training
-  if (verbose) message("Searching motifs in TRAINING sequences...")
+  if (verbose) message("\nSearching motifs in TRAINING sequences...")
   train_result <- .find_motifs_parallel(
-    sequences, unique_motifs, sequence_names, train_class_lookup, train_length_lookup,
-    n_cores,  dataset = if (has_validation) "training" else NULL
+    sequences, unique_motifs, sequence_names,
+    train_class_lookup, train_length_lookup,
+    n_cores,
+    dataset = if (has_test) "training" else NULL
   )
 
-  # Search in validation
-  val_result <- NULL
-  if (has_validation) {
-    if (verbose) message("\nSearching motifs in VALIDATION sequences...")
-    val_result <- .find_motifs_parallel(
-      val_sequences, unique_motifs, val_sequence_names, val_class_lookup, val_length_lookup,
-      n_cores, dataset = "validation"
+  # Search motifs in test sequences
+  tst_result <- NULL
+  if (has_test) {
+    if (verbose) message("Searching motifs in TEST sequences...")
+    tst_result <- .find_motifs_parallel(
+      tst_sequences, unique_motifs, tst_sequence_names,
+      tst_class_lookup, tst_length_lookup,
+      n_cores,
+      dataset = "test"
     )
   }
 
   # Combine results
-  result_df <- if (!is.null(val_result)) rbind(train_result, val_result) else train_result
-  elapsed <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
+  result_df <- if (!is.null(tst_result)) rbind(train_result, tst_result) else train_result
+  elapsed   <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
 
   # Add attributes
   attr(result_df, "n_train_sequences") <- n_train
-  attr(result_df, "n_validation_sequences") <- n_val
-  attr(result_df, "n_motifs") <- length(unique_motifs)
-  attr(result_df, "n_occurrences") <- nrow(result_df)
-  attr(result_df, "elapsed_time") <- elapsed
-  attr(result_df, "has_validation") <- has_validation
+  attr(result_df, "n_test_sequences")  <- n_test
+  attr(result_df, "n_motifs")          <- length(unique_motifs)
+  attr(result_df, "n_occurrences")     <- nrow(result_df)
+  attr(result_df, "elapsed_time")      <- elapsed
+  attr(result_df, "has_test")          <- has_test
   class(result_df) <- c("kmers_in_seq_result", "data.frame")
 
   # Print summary
   if (verbose) {
-    message(sprintf("\n Complete."))
+    message("Complete.")
     message(sprintf("Total occurrences: %d | Time: %.2f s", nrow(result_df), elapsed))
 
-    if (nrow(result_df) > 0 && has_validation && "dataset" %in% colnames(result_df)) {
-      message("\nOccurrences by dataset:")
-      print(table(result_df$dataset))
+    if (nrow(result_df) > 0L && has_test && "dataset" %in% colnames(result_df)) {
+      message("Occurrences by dataset:")
+      message(paste(capture.output(print(table(result_df$dataset))), collapse = "\n"))
     }
   }
 

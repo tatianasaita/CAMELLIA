@@ -14,10 +14,10 @@
 #' The function applies one of three selection strategies:
 #' \itemize{
 #'   \item Case 1 (n < k): Returns empty result - insufficient motifs
-#'   \item Case 2 (k ≤ n < m): Distributes evenly by class
+#'   \item Case 2 (k <= n < m): Distributes evenly by class
 #'   \item Case 3 (n ≥ m): Distributes evenly by cluster
 #'}
-#' @note
+#' @note 
 #' \itemize{
 #'   \item Requires .select_by_cluster_fast, .select_by_class_fast. See \code{internal-functions.R} for details.
 #'   \item S3 methods available. See \code{methods.R} for details.
@@ -37,8 +37,8 @@ select_motifs <- function(motif_cluster, cluster_result, n, verbose = TRUE) {
 
   n <- as.integer(n)
   cluster_summary  <- cluster_result$cluster_summary
-  dominant_classes <- unique(cluster_summary$dominant_class)
-  k                <- length(dominant_classes)
+  dominant_classes <- unique(cluster_summary$dominant_class) 
+  k                <- length(unique(cluster_result$element_assignment$class))
   classe_order     <- names(sort(table(dominant_classes), decreasing = TRUE))
 
   # ── Build cluster_to_class keeping only clusters present in motif_cluster ──
@@ -96,13 +96,23 @@ select_motifs <- function(motif_cluster, cluster_result, n, verbose = TRUE) {
     case_used <- "CASE_2"
   } else {
     if (verbose) message(sprintf("CASE 3: Distributing by cluster (%d >= %d)", n, m))
-    selected_motifs <- .select_by_cluster_fast(motif_cluster, cluster_to_class, classe_order, n, m)
+    
+    # Extract homogeneity in the same order as the valid clusters
+    hom_vec <- setNames(
+      cluster_summary$homogeneity[match(valid_names, paste0("Cluster_", cluster_summary$cluster_id))],
+      valid_names
+    )
+    
+    selected_motifs <- .select_by_cluster_fast(
+      motif_cluster, cluster_to_class, classe_order, n, m,
+      cluster_homogeneity = hom_vec
+    )
     case_used <- "CASE_3"
   }
 
 # Output
   if (verbose) {
-    message("\nSelected motifs by class:")
+    message("Selected motifs by class:")
     for (classe in classe_order) {
       if (classe %in% names(selected_motifs)) {
         message(sprintf("  %s: %d motifs", classe, length(selected_motifs[[classe]])))
